@@ -1,0 +1,143 @@
+/**
+ * The panel system's styling contract, and the look it ships with.
+ *
+ * Every rule the package draws reads `var(--panelty-x, var(--panelty-x-default))`. That is two tiers
+ * on purpose: `--panelty-x` is the CONSUMER's slot — unset by default, so an app maps its own design
+ * system onto it in one block, and can do so on any subtree or on a single instance — while
+ * `--panelty-x-default` is what the package looks like when nobody says otherwise. An app that wants
+ * a different SHIPPED look overrides the `-default` layer instead, and its own per-instance
+ * overrides still win over it.
+ *
+ * A consumer imports this file once. Without it the package draws unstyled: a `var()` with neither
+ * tier set resolves to nothing, which is the honest failure — a silent half-theme would be worse.
+ *
+ * Three groups. The SHARED BASE below is the palette, scale and motion every part of the chrome
+ * reads. `--panelty-panel-*` and `--panelty-tab-*` are the two parts that also carry structure of
+ * their own, and the tab group is per-instance by design: two strips in one app legitimately sit on
+ * different surfaces, which is why those five have no `-default` and state their fallback inline.
+ */
+:root {
+	/* --- accent, and what reads on it -------------------------------------------------------- */
+	--panelty-accent-default: #50d0a0;
+	--panelty-accent-strong-default: #3fb88a;
+	--panelty-accent-fill-default: color-mix(
+		in srgb,
+		var(--panelty-accent, var(--panelty-accent-default)) 18%,
+		transparent
+	);
+	--panelty-ring-accent-default: color-mix(
+		in srgb,
+		var(--panelty-accent, var(--panelty-accent-default)) 45%,
+		transparent
+	);
+	--panelty-on-accent-default: #0a0c10;
+
+	/* --- danger ------------------------------------------------------------------------------ */
+	--panelty-danger-default: #f06080;
+	--panelty-danger-fill-default: color-mix(
+		in srgb,
+		var(--panelty-danger, var(--panelty-danger-default)) 16%,
+		transparent
+	);
+	--panelty-on-danger-default: var(--panelty-on-accent, var(--panelty-on-accent-default));
+
+	/* --- surfaces, in stacking order: the ground, then each step up off it -------------------- */
+	--panelty-bg-default: #111111;
+	--panelty-surface-1-default: #1c1c1c;
+	--panelty-surface-2-default: #262626;
+	--panelty-surface-3-default: #303030;
+	--panelty-border-default: #484848;
+	--panelty-border-strong-default: #565656;
+	--panelty-hover-fill-default: color-mix(
+		in srgb,
+		var(--panelty-text, var(--panelty-text-default)) 8%,
+		transparent
+	);
+
+	/* --- ink --------------------------------------------------------------------------------- */
+	--panelty-text-default: #d6d6d6;
+	--panelty-text-dim-default: #9a9a9a;
+	--panelty-text-muted-default: #7a7a7a;
+	--panelty-disabled-opacity-default: 0.45;
+
+	/* --- structure --------------------------------------------------------------------------- */
+	--panelty-radius-sm-default: 4px;
+	--panelty-radius-md-default: 6px;
+	--panelty-space-1-default: 0.125rem;
+	--panelty-space-2-default: 0.25rem;
+	--panelty-space-3-default: 0.375rem;
+	--panelty-space-4-default: 0.5rem;
+	--panelty-space-6-default: 0.75rem;
+
+	/* --- type -------------------------------------------------------------------------------- */
+	--panelty-font-sans-default:
+		'Inter',
+		system-ui,
+		-apple-system,
+		'Segoe UI',
+		sans-serif;
+	--panelty-fs-micro-default: 0.72rem;
+	--panelty-fs-small-default: 0.82rem;
+	--panelty-fs-body-default: 0.92rem;
+	/* A chrome strip's label lands on a whole pixel, so two strips of different heights carry the
+	   same face rather than two roundings of one rem value. */
+	--panelty-fs-chrome-default: round(
+		nearest,
+		var(--panelty-fs-small, var(--panelty-fs-small-default)),
+		1px
+	);
+	--panelty-lh-text-default: 1.35;
+
+	/* --- motion. One token per role, because a duration and its easing are never spent apart:
+	       `--panelty-motion: 0s` is how a consumer turns the chrome's animation off. ------------ */
+	--panelty-motion-default: 80ms ease;
+	--panelty-motion-slow-default: 120ms ease;
+
+	/* --- focus, and the touch floor ---------------------------------------------------------- */
+	--panelty-focus-ink-default: var(--panelty-accent, var(--panelty-accent-default));
+	--panelty-focus-width-default: 2px;
+	/* Documentary under a fine pointer; the floor only applies under (pointer: coarse) below. */
+	--panelty-hit-default: 28px;
+	/* The box a control wears inside a chrome strip. A strip is shorter than the touch floor by
+	   construction, so its controls state this and take the floor back under a coarse pointer. */
+	--panelty-chrome-control-h-default: 20px;
+
+	/* --- depth ------------------------------------------------------------------------------- */
+	--panelty-shadow-2-default: 0 12px 36px rgba(0, 0, 0, 0.55);
+	--panelty-z-chrome-default: 55;
+	--panelty-z-menu-default: 100;
+	--panelty-z-drag-ghost-default: 150;
+
+	/* --- the panel group --------------------------------------------------------------------- */
+	/* The height of every chrome strip a panel stacks: its header, and any toolbar flush beneath.
+	   One token, because the two have to read as one band. */
+	--panelty-panel-header-h-default: 26px;
+	--panelty-panel-splitter-size-default: 6px;
+}
+
+/* The touch floors. A coarse pointer is a different device class, not a narrow one, so this is the
+   one place the package asks a media query rather than a container. */
+@media (hover: none) and (pointer: coarse) {
+	:root {
+		--panelty-hit-default: 44px;
+		--panelty-panel-splitter-size-default: 14px;
+		/* …and the header grows to fit the floored controls it hosts. */
+		--panelty-panel-header-h-default: 44px;
+	}
+}
+
+/*
+ * The per-instance group, listed here because it is contract and drawn nowhere else. These have no
+ * `-default` tier: each states its fallback inline, against a shared-base token, so an unset hook
+ * is not an unstyled one.
+ *
+ *   --panelty-tab-surface   the strip and its inactive tabs        (falls back to surface-2)
+ *   --panelty-tab-body      the surface the ACTIVE tab drops to,   (falls back to surface-1)
+ *                          which a consumer paints its body with to complete the seam
+ *   --panelty-tab-fs        the label size                         (falls back to fs-small)
+ *   --panelty-tab-pad       the strip's own padding                (falls back to space-2 space-2 0)
+ *   --panelty-tab-align     how tabs sit in the strip              (falls back to flex-end)
+ *   --panelty-btn-ink       one button's label colour              (falls back to text)
+ *   --panelty-icon-btn-size the box a chrome-density icon button wears
+ *                          (falls back to chrome-control-h)
+ */
