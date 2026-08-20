@@ -3,10 +3,25 @@
 	"version": "0.1.0",
 	"description": "A tab + panel workspace for Svelte: split, drag, tear off, and hand every gesture to a host you own.",
 	"license": "MIT",
+	"author": "Philipp Thölke",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dav0dea/panelty.git"
+	},
+	"keywords": [
+		"svelte",
+		"svelte5",
+		"panels",
+		"tabs",
+		"layout",
+		"dockable",
+		"workspace",
+		"split-pane"
+	],
 	"type": "module",
 	"files": [
 		"src",
-		"README.md"
+		"!src/**/*.test.ts"
 	],
 	"exports": {
 		".": {
@@ -22,7 +37,8 @@
 	],
 	"scripts": {
 		"check": "svelte-check --tsconfig ./tsconfig.json",
-		"test": "vitest run"
+		"test": "vitest run",
+		"prepublishOnly": "npm run check && npm test"
 	},
 	"peerDependencies": {
 		"svelte": "^5.0.0"
