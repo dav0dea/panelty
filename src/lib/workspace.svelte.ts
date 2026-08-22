@@ -104,11 +104,12 @@ class WorkspaceStore {
 	 * shared state bag — that separation is what keeps peer isolation and navigation-must-not-dirty
 	 * true by construction rather than by classification. */
 	private _paths = $state<Record<string, string>>({});
-	/** A panel this client has asked to GO TO, and where it was when it asked — `from` is null for a
-	 * panel the gesture MINTS, which is drawn nowhere yet. The pair is what makes the wait exact in
-	 * both orderings: the answer and the delta carrying its work race, so neither "it is drawn" nor
-	 * "a delta arrived" is the condition on its own. */
-	private _follow: { panel: string; from: string | null } | null = null;
+	/** A panel this client has asked to GO TO, and the slot the subtree carrying it sat in when it
+	 * asked — `null` for a panel the gesture MINTS, which is drawn nowhere yet. The pair is what
+	 * makes the wait exact in both orderings: the op's answer and the delta carrying its work race,
+	 * so neither "it is drawn" nor "a delta arrived" is the condition on its own, and a PEER's delta
+	 * arriving in between does not spend the wait. */
+	private _follow: { panel: string; subtree: string; was: string | null } | null = null;
 	/** Last-focused panel id — keyboard shortcuts scope to this. */
 	activePanelId = $state<string | null>(null);
 	/** Viewpoint: the maximized node, PER PAGE — a page being a child of the root stack. A page
@@ -273,11 +274,11 @@ class WorkspaceStore {
 		}
 	}
 
-	/** Go to `panel` once the replica draws it somewhere other than `from` — the page that held it
-	 * when the gesture was RAISED, or null for one the gesture mints. Every stack on the way opens
-	 * onto it and the focus lands there. Where every op that mints a panel puts its answer. */
-	private _followTo(panel: string, from: string | null = null): void {
-		this._follow = { panel, from };
+	/** Go to `panel` once the replica draws `subtree` somewhere other than `was`. Every stack on the
+	 * way opens onto it and the focus lands there. Where every op that mints or moves a panel puts
+	 * its answer. */
+	private _followTo(panel: string, subtree: string, was: string | null): void {
+		this._follow = { panel, subtree, was };
 		// Tried at once as well as on every sync: the delta can beat the answer, and then there is no
 		// later sync to wait for.
 		this._resolveFollow();
@@ -287,10 +288,18 @@ class WorkspaceStore {
 		const f = this._follow;
 		const root = this._root;
 		if (!f || !root || !findNode(root, f.panel)) return;
-		if (f.from !== null && this._pageOf(f.panel) === f.from) return;
+		if (f.was !== null && this._slotOf(f.subtree) === f.was) return;
 		this._follow = null;
 		this._reveal(f.panel);
 		this._focus(f.panel);
+	}
+
+	/** Where a subtree sits, as one comparable word: its parent and its index in it. A move changes
+	 * one or the other, which is how a follow tells this gesture's delta from a peer's. */
+	private _slotOf(id: string): string {
+		const root = this._root;
+		const up = root ? findParent(root, id) : null;
+		return up ? `${up.parent.id}#${up.index}` : '';
 	}
 
 	/** The root stack's child that `id` sits under — the "page" it is on. */
@@ -311,12 +320,26 @@ class WorkspaceStore {
 	/** Add a panel: beside `at` with a direction, or as a tab in it without one. */
 	add(at: string, opts: AddAt = {}): void {
 		void this._host.addPanel(at, opts).then((fresh) => {
-			if (fresh !== null) this._followTo(fresh);
+			// A minted panel is drawn nowhere yet, so being drawn at all IS the change to wait for.
+			if (fresh !== null) this._followTo(fresh, fresh, null);
 		});
 	}
 
 	close(nodeId: string): void {
+		this._retreatFrom(nodeId);
 		void this._host.removePanel(nodeId);
+	}
+
+	/** Move off `nodeId` before its close lands: a stack showing what is about to go shows its
+	 * NEIGHBOUR, not its first. Viewpoint, so it happens now rather than waiting for the delta —
+	 * without it the fallback silently rewrote the gesture. */
+	private _retreatFrom(nodeId: string): void {
+		const root = this._root;
+		const up = root ? findParent(root, nodeId) : null;
+		if (!up || up.parent.kind !== 'stack' || this.showing(up.parent.id) !== nodeId) return;
+		const rest = up.parent.children.filter((c) => c.id !== nodeId);
+		const neighbour = rest[Math.min(up.index, rest.length - 1)];
+		if (neighbour) this.show(up.parent.id, neighbour.id);
 	}
 
 	/** A splitter drag fires this per pointermove. It draws locally — `containerPx` is the split's
@@ -479,10 +502,9 @@ class WorkspaceStore {
 		// leaving — which is what a follow has to see it get past.
 		const node = this._root ? findNode(this._root, subtree) : null;
 		const moved = node ? firstPanelIn(node) : '';
-		const from = this._pageOf(subtree);
+		const was = this._slotOf(subtree);
 		void this._host.movePanel(subtree, to).then((ok) => {
-			if (!ok || !moved) return;
-			this._followTo(moved, from);
+			if (ok && moved) this._followTo(moved, subtree, was);
 		});
 	}
 

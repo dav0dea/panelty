@@ -107,8 +107,11 @@ describe('a workspace with nothing behind it but memory', () => {
 		expect(drawn(), 'the group of one promoted its survivor').toBe('tabs[editor console]');
 		expect(ws.page, 'and the client follows what it carried').toBe(first);
 
-		// Closing one of two closes it; the workspace keeps the other.
+		// Closing one of two closes it; the workspace keeps the other, and the strip moves to the
+		// NEIGHBOUR before the delta lands rather than falling back to its first.
+		ws.show(workspace().root.id, born);
 		ws.close(born);
+		expect(ws.page, 'off the page being closed at once').toBe(first);
 		await settle();
 		expect(drawn()).toBe('tabs[editor]');
 	});

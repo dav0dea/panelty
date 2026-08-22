@@ -355,7 +355,8 @@
 </script>
 
 <div
-	class="panel-header {variant}"
+	class="panel-header"
+	class:strip={variant === 'strip'}
 	class:maximized={isMax}
 	class:dragover={!!ws.dragging}
 	bind:this={headerEl}
@@ -382,7 +383,7 @@
 	aria-label={variant === 'strip' ? 'Workspace tabs' : 'Panel header'}
 	data-testid={variant === 'strip' ? 'workspace-tabs' : 'panel-header'}
 >
-	<div class="pt-names thin-scrollbar" role={chips ? 'tablist' : undefined}>
+	<div class="pt-names" role={chips ? 'tablist' : undefined}>
 		{#if soloPanel}
 			<Button
 				variant="ghost"
@@ -498,16 +499,16 @@
 		height: var(--panelty-panel-header-h, var(--panelty-panel-header-h-default));
 		flex: 0 0 auto;
 		padding: 0 var(--panelty-space-2, var(--panelty-space-2-default));
-		/* The TOP rung of the panel's own ladder — body `--panelty-surface-1`, content toolbar `--panelty-surface-2`,
-		   this `--panelty-surface-3` — so each adjacency is a real step and none needs a hairline, not
-		   even the one 26px inside the panel edge. */
+		/* The TOP rung of the panel's own ladder — body `--panelty-surface-1`, content toolbar
+		   `--panelty-surface-2`, this `--panelty-surface-3` — so each adjacency is a real step and
+		   none needs a hairline, not even the one 26px inside the panel edge. */
 		background: var(--panelty-surface-3, var(--panelty-surface-3-default));
 		gap: var(--panelty-space-1, var(--panelty-space-1-default));
 		user-select: none;
 		cursor: grab;
 		min-width: 0;
 	}
-	/* The strip is the ROOT stack's header, hoisted into the consumer's app bar: it blends with the
+	/* The strip is the ROOT group's header, hoisted into the consumer's app bar: it blends with the
 	   bar rather than painting its own header surface, and it is never a drag handle itself. */
 	.panel-header.strip {
 		background: transparent;
@@ -515,6 +516,26 @@
 		padding: 0;
 		cursor: default;
 	}
+	.panel-header:active {
+		cursor: grabbing;
+	}
+	.panel-header.strip:active {
+		cursor: default;
+	}
+	/* Maximized is a MODE, not a selection: this panel is the only one on screen, and with the rest
+	   of the layout gone there is nothing left to compare it against — the state is invisible unless
+	   the chrome carries it. A faint accent wash over the header's own rung, because accent IS state
+	   here, and it mixes INTO `--panelty-surface-3` rather than layering on it so the strip keeps its
+	   step on the elevation ladder. It is a fill and the active-panel marker is a ring, so the two
+	   read as different things on a panel that is necessarily both. */
+	.panel-header.maximized {
+		background: color-mix(
+			in srgb,
+			var(--panelty-accent, var(--panelty-accent-default)) 9%,
+			var(--panelty-surface-3, var(--panelty-surface-3-default))
+		);
+	}
+	/* A header is a drop target for the whole of a drag: dropping here tabs the two together. */
 	.panel-header.dragover {
 		background: color-mix(
 			in srgb,
@@ -522,19 +543,17 @@
 			transparent
 		);
 	}
-	.panel-header:active {
-		cursor: grabbing;
-	}
-	.panel-header.strip:active {
-		cursor: default;
-	}
 
+	/* The names region — a dropdown when this stack holds one panel, chips when it holds several.
+	   It is the header's SHRINK ABSORBER either way, so a long name gives way to an ellipsis or to
+	   a scroll instead of pushing the ✕ out of the panel. */
 	.pt-names {
 		display: flex;
-		align-items: stretch;
+		align-items: center;
 		min-width: 0;
 		overflow-x: auto;
 		overflow-y: hidden;
+		scrollbar-width: none;
 		gap: var(--panelty-space-1, var(--panelty-space-1-default));
 	}
 	.panel-header.strip .pt-names {
@@ -545,9 +564,10 @@
 	.pt-chip {
 		display: flex;
 		align-items: center;
+		flex: 0 0 auto;
 		gap: var(--panelty-space-1, var(--panelty-space-1-default));
 		padding: 0 var(--panelty-space-2, var(--panelty-space-2-default));
-		min-height: var(--panelty-hit, var(--panelty-hit-default));
+		min-height: var(--panelty-chrome-control-h, var(--panelty-chrome-control-h-default));
 		min-width: 0;
 		white-space: nowrap;
 		border-radius: var(--panelty-radius-sm, var(--panelty-radius-sm-default));
@@ -555,27 +575,56 @@
 		color: var(--panelty-text-dim, var(--panelty-text-dim-default));
 		cursor: pointer;
 	}
+	/* The active member drops to the body surface beneath it — one connected piece, no divider. */
 	.pt-chip.active {
 		background: var(--panelty-bg, var(--panelty-bg-default));
 		color: var(--panelty-text, var(--panelty-text-default));
+	}
+	.pt-chip:hover {
+		color: var(--panelty-text, var(--panelty-text-default));
+	}
+	.pt-chip:focus-visible,
+	.pt-close:focus-visible,
+	.pt-add:focus-visible {
+		outline: var(--panelty-focus-width, var(--panelty-focus-width-default)) solid
+			var(--panelty-focus-ink, var(--panelty-focus-ink-default));
+		outline-offset: 1px;
 	}
 	.pt-label {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
+	/* The frozen chrome geometry: a strip is shorter than the touch floor by construction, so its
+	   controls state their box here and take the floor back under a coarse pointer. */
 	.pt-close,
 	.pt-add {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		min-width: var(--panelty-hit, var(--panelty-hit-default));
-		min-height: var(--panelty-hit, var(--panelty-hit-default));
+		flex: 0 0 auto;
+		width: var(--panelty-chrome-control-h, var(--panelty-chrome-control-h-default));
+		height: var(--panelty-chrome-control-h, var(--panelty-chrome-control-h-default));
 		border: 0;
+		padding: 0;
 		background: none;
 		color: inherit;
 		cursor: pointer;
 		border-radius: var(--panelty-radius-sm, var(--panelty-radius-sm-default));
+	}
+	@media (hover: none) and (pointer: coarse) {
+		.pt-close,
+		.pt-add {
+			width: var(--panelty-hit, var(--panelty-hit-default));
+			height: var(--panelty-hit, var(--panelty-hit-default));
+		}
+		.pt-chip {
+			min-height: var(--panelty-hit, var(--panelty-hit-default));
+		}
+		/* A finger has no hover, so the ✕ rests open rather than waiting for one. */
+		.pt-close {
+			opacity: 1;
+		}
 	}
 	.pt-close {
 		opacity: 0;
@@ -585,11 +634,7 @@
 	.pt-close:focus-visible {
 		opacity: 1;
 	}
-	@media (hover: none) and (pointer: coarse) {
-		.pt-close {
-			opacity: 1;
-		}
-	}
+	/* A real slot at the drop index, so it is clear where the drop lands — not a thin sliver. */
 	.pt-preview {
 		flex: 0 0 auto;
 		width: 3rem;
@@ -601,33 +646,64 @@
 		);
 	}
 
-	.spacer {
-		flex: 1 1 auto;
+	/* The primitives keep the frozen 20px control geometry of the 26px bar. Under a coarse pointer
+	   the bar itself grows to --panelty-hit, so the floors apply unchanged there. The `button` tag
+	   qualifier is load-bearing: without it this ties with the primitive's own `.ui-btn.s-md`
+	   padding, and the two rules live in separate built CSS chunks — a tie there is settled by the
+	   emitted <link> order, not by the source. */
+	.panel-header :global(button.content-btn) {
+		height: var(--panelty-chrome-control-h, var(--panelty-chrome-control-h-default));
+		padding: 0 var(--panelty-space-3, var(--panelty-space-3-default));
+		gap: var(--panelty-space-2, var(--panelty-space-2-default));
 		min-width: 0;
 	}
+	/* The icon buttons state only their box — `density="chrome"` owns the coarse-pointer floor. */
+	.panel-header :global(.hdr-btn) {
+		--panelty-icon-btn-size: var(--panelty-chrome-control-h, var(--panelty-chrome-control-h-default));
+		color: var(--panelty-text-dim, var(--panelty-text-dim-default));
+	}
+	.panel-header :global(.hdr-btn:hover:not(:disabled)) {
+		color: var(--panelty-text, var(--panelty-text-default));
+	}
+	/* opacity: intentional — the type icon and the caret are quieted BELOW the title they sit beside
+	   (a hierarchy, not a disabled state); --panelty-disabled-opacity would read as "this header is
+	   inert". `display: flex` collapses each span onto its icon's own box, so neither adds the line
+	   box a text glyph used to need inside a 20px header button. */
+	.ic,
+	.caret {
+		display: flex;
+		align-items: center;
+	}
+	.ic {
+		opacity: 0.85;
+		flex: 0 0 auto;
+	}
+	.title {
+		font-weight: 500;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.caret {
+		opacity: 0.5;
+		font-size: var(--panelty-fs-micro, var(--panelty-fs-micro-default));
+		flex: 0 0 auto;
+	}
+	.spacer {
+		flex: 1;
+		min-width: 0;
+	}
+	/* The overflow-able actions and the trigger they spill into, in one rigid box the budget above
+	   is measured AGAINST rather than FROM. */
 	.hdr-actions {
 		display: flex;
 		align-items: center;
-		flex: 0 0 auto;
 		gap: var(--panelty-space-1, var(--panelty-space-1-default));
+		flex: 0 0 auto;
 	}
+	/* A spilled action is a row in the ⋯ menu instead; it stays in the DOM so its intrinsic width
+	   can be re-read when the responsive root size moves it. `:global`, because the class rides a
+	   primitive's `class` prop onto its inner <button>. */
 	.hdr-actions :global(.spilled) {
 		display: none;
-	}
-	.panel-header :global(.content-btn) {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--panelty-space-1, var(--panelty-space-1-default));
-		min-width: 0;
-	}
-	.panel-header :global(.content-btn .title) {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.ic,
-	.caret {
-		display: inline-flex;
-		align-items: center;
 	}
 </style>
