@@ -12,14 +12,16 @@
   touch has instead.
 -->
 <script lang="ts">
-	import { findParent, type Direction, type PanelNode } from './model';
+	import { findNode, findParent, type Direction, type LayoutNode, type PanelNode } from './model';
 	import { workspace } from './workspace.svelte';
 	import { resolvePanelType } from './registry';
 	import { portal, beginDrag } from './gesture';
-	import PanelHeader from './PanelHeader.svelte';
+	import StackHeader from './StackHeader.svelte';
 	import { onDestroy } from 'svelte';
 
-	let { node }: { node: PanelNode } = $props();
+	/** `header` is the node whose chrome sits above this panel: the panel itself when it stands
+	 *  alone, or the stack it is a member of — one header for the whole group. */
+	let { node, header }: { node: PanelNode; header: LayoutNode } = $props();
 	const ws = workspace();
 	const type = $derived(resolvePanelType(node.panelType));
 	const active = $derived(ws.activePanelId === node.id);
@@ -27,14 +29,13 @@
 	// --- drop zones (drag a panel or tab in to split / reposition) ---------
 	type DropZone = 'left' | 'right' | 'top' | 'bottom';
 	let dropZone = $state<DropZone | null>(null);
-	// Zones show while dragging any panel/tab, except onto the source panel
-	// itself or the active tab dragged onto its own panels (no-ops).
+	// Zones show while dragging any subtree, except onto the source itself or into its own
+	// descendant — the second would make a cycle.
 	const dropActive = $derived.by(() => {
 		const d = ws.dragging;
-		if (!d) return false;
-		if (d.kind === 'tab' && d.workspaceId === ws.state.activeWorkspaceId) return false;
-		if (d.kind === 'panel' && d.panelId === node.id) return false;
-		return true;
+		if (!d || d.node === node.id) return false;
+		const source = findNode(ws.root, d.node);
+		return !source || !findNode(source, node.id);
 	});
 	$effect(() => {
 		if (!dropActive) dropZone = null;
@@ -64,7 +65,7 @@
 		if (!ws.dragging || !z) return;
 		e.preventDefault();
 		const direction = z === 'left' || z === 'right' ? 'row' : 'column';
-		ws.dropOn({ panel: node.id, direction, placeBefore: z === 'left' || z === 'top' });
+		ws.dropOn({ beside: node.id, direction, placeBefore: z === 'left' || z === 'top' });
 	}
 
 	const CORNERS = ['tl', 'tr', 'bl', 'br'] as const;
@@ -89,7 +90,7 @@
 	const THRESHOLD = 24;
 
 	function isSibling(a: string, b: string): boolean {
-		const root = ws.active.root;
+		const root = ws.root;
 		const pa = findParent(root, a);
 		const pb = findParent(root, b);
 		return !!pa && !!pb && pa.parent.id === pb.parent.id;
@@ -213,7 +214,7 @@
 	data-panel-id={node.id}
 	data-panel-type={node.panelType}
 >
-	<PanelHeader {node} />
+	<StackHeader node={header} />
 	<div class="panel-body">
 		{#if type.component}
 			{@const Content = type.component}

@@ -12,9 +12,9 @@
  * tier set resolves to nothing, which is the honest failure — a silent half-theme would be worse.
  *
  * Three groups. The SHARED BASE below is the palette, scale and motion every part of the chrome
- * reads. `--panelty-panel-*` and `--panelty-tab-*` are the two parts that also carry structure of
- * their own, and the tab group is per-instance by design: two strips in one app legitimately sit on
- * different surfaces, which is why those five have no `-default` and state their fallback inline.
+ * reads. `--panelty-panel-*` is the part that also carries structure of its own. The last group is
+ * per-instance by design — two of the same control in one app legitimately sit on different
+ * surfaces — which is why those have no `-default` and state their fallback inline.
  */
 :root {
 	/* --- accent, and what reads on it -------------------------------------------------------- */
@@ -131,12 +131,6 @@
  * `-default` tier: each states its fallback inline, against a shared-base token, so an unset hook
  * is not an unstyled one.
  *
- *   --panelty-tab-surface   the strip and its inactive tabs        (falls back to surface-2)
- *   --panelty-tab-body      the surface the ACTIVE tab drops to,   (falls back to surface-1)
- *                          which a consumer paints its body with to complete the seam
- *   --panelty-tab-fs        the label size                         (falls back to fs-small)
- *   --panelty-tab-pad       the strip's own padding                (falls back to space-2 space-2 0)
- *   --panelty-tab-align     how tabs sit in the strip              (falls back to flex-end)
  *   --panelty-btn-ink       one button's label colour              (falls back to text)
  *   --panelty-icon-btn-size the box a chrome-density icon button wears
  *                          (falls back to chrome-control-h)

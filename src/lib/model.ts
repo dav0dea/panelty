@@ -2,9 +2,10 @@
  * Workspace layout model — the pure, framework-agnostic shapes the panel system renders, and the
  * queries over them.
  *
- * A tab is a recursive tree. Leaves (`PanelNode`) host one registered panel type; internal nodes
- * (`SplitNode`) divide their space between N children along one axis, with fractional `sizes` that
- * sum to 1.
+ * The arrangement is one recursive tree. `PanelNode` leaves host a registered panel type;
+ * `SplitNode` divides its space between N children along one axis, with fractional `sizes` that sum
+ * to 1; `StackNode` gives its whole slot to ONE child at a time and draws the rest as tabs. A
+ * workspace tab is a child of the ROOT stack and nothing more — there is no second kind of thing.
  *
  * The tree is not authored here: the manager holds it, `graphDoc` reads it off the document root
  * into exactly this shape, and every mutation is a layout command. What remains is the vocabulary,
@@ -49,22 +50,30 @@ export interface SplitNode {
 	sizes: number[];
 }
 
-export type LayoutNode = PanelNode | SplitNode;
-
-export interface Workspace {
+/** A tab group: every child takes the whole slot, and one is shown. WHICH one is the viewer's, not
+ * the arrangement's — it is viewpoint, so two clients on one patch look at different tabs. */
+export interface StackNode {
+	kind: 'stack';
 	id: string;
-	name: string;
-	root: LayoutNode;
+	children: LayoutNode[];
 }
 
-export interface WorkspaceState {
-	workspaces: Workspace[];
-	activeWorkspaceId: string;
+export type LayoutNode = PanelNode | SplitNode | StackNode;
+
+/** A container: the two node kinds that hold children. */
+export type BranchNode = SplitNode | StackNode;
+
+export function isBranch(n: LayoutNode): n is BranchNode {
+	return n.kind === 'split' || n.kind === 'stack';
 }
 
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
+
+export function childrenOf(node: LayoutNode): LayoutNode[] {
+	return isBranch(node) ? node.children : [];
+}
 
 export function findPanel(root: LayoutNode, panelId: string): PanelNode | null {
 	if (root.kind === 'panel') return root.id === panelId ? root : null;
@@ -90,7 +99,7 @@ export function firstPanelId(root: LayoutNode): string {
 	return collectPanels(root)[0]?.id ?? '';
 }
 
-/** The node with this id — a panel OR a split. `findPanel` answers only for leaves. */
+/** The node with this id — a panel, a split OR a stack. `findPanel` answers only for leaves. */
 export function findNode(root: LayoutNode, id: string): LayoutNode | null {
 	if (root.id === id) return root;
 	if (root.kind === 'panel') return null;
@@ -102,14 +111,13 @@ export function findNode(root: LayoutNode, id: string): LayoutNode | null {
 }
 
 /** The first panel inside `node`, in document order — `node` itself when it is one. A drag names a
- * SUBTREE (a dragged tab names its tab's root), and this is the panel the user is working in once
- * it lands. */
+ * SUBTREE, and this is the panel the user is working in once it lands. */
 export function firstPanelIn(node: LayoutNode): string {
 	return collectPanels(node)[0]?.id ?? '';
 }
 
 interface ParentRef {
-	parent: SplitNode;
+	parent: BranchNode;
 	index: number;
 }
 
@@ -121,6 +129,78 @@ export function findParent(root: LayoutNode, nodeId: string): ParentRef | null {
 		if (deeper) return deeper;
 	}
 	return null;
+}
+
+/** The nearest stack at or above `id` — the group a header's actions address. */
+export function stackOf(root: LayoutNode, id: string): StackNode | null {
+	if (root.kind === 'stack' && (root.id === id || root.children.some((c) => c.id === id))) {
+		return root;
+	}
+	for (const c of childrenOf(root)) {
+		const f = stackOf(c, id);
+		if (f) return f;
+	}
+	return null;
+}
+
+// ---------------------------------------------------------------------------
+// Normalisation — the rules that keep a tree drawable after any plan
+// ---------------------------------------------------------------------------
+
+/**
+ * The tree a renderer is allowed to see, from the tree a plan produced.
+ *
+ * Every structural edit can leave a shape that draws wrong rather than differently — an empty
+ * container, a split of one, a stack inside a stack — and each of those is a state nobody asked
+ * for. So the rules are applied ONCE here, bottom-up, rather than remembered at every planner:
+ *
+ *  · a container with no children is gone;
+ *  · a container with one child IS that child, because a split of one divides nothing and a stack
+ *    of one has nothing to switch between — except the ROOT, which stays a stack so the tab strip
+ *    it draws cannot vanish under its last tab;
+ *  · a split inside a split along the same axis is one split, its children taking their parent's
+ *    share of the slot;
+ *  · a split's shares always sum to 1.
+ *
+ * A stack inside a stack is deliberately NOT flattened: it is a tab group that is one tab of an
+ * outer group, and folding it up would take a group the user built inside a page and scatter its
+ * members across the page strip.
+ *
+ * Null means the node itself is gone — which only the caller can act on.
+ */
+export function normalize(node: LayoutNode, isRoot = false): LayoutNode | null {
+	if (node.kind === 'panel') return node;
+
+	const children: LayoutNode[] = [];
+	const sizes: number[] = [];
+	node.children.forEach((raw, i) => {
+		const child = normalize(raw);
+		if (!child) return;
+		const share = node.kind === 'split' ? (node.sizes[i] ?? 0) : 0;
+		// Flatten a same-kind container into its parent, so the shape a user built by hand and the
+		// shape a plan happened to leave are the same tree.
+		if (node.kind === 'split' && child.kind === 'split' && child.direction === node.direction) {
+			const inner = child.sizes.reduce((a, b) => a + b, 0) || 1;
+			child.children.forEach((c, j) => {
+				children.push(c);
+				sizes.push((share * (child.sizes[j] ?? 0)) / inner);
+			});
+			return;
+		}
+		children.push(child);
+		sizes.push(share);
+	});
+
+	if (children.length === 0) return isRoot ? { ...node, children: [] } : null;
+	if (children.length === 1 && !isRoot) return children[0];
+	if (node.kind === 'stack') return { ...node, children };
+	const total = sizes.reduce((a, b) => a + b, 0);
+	const even = 1 / children.length;
+	return {
+		...node,
+		children,
+		sizes: total > 0 ? sizes.map((s) => s / total) : sizes.map(() => even)
+	};
 }
 
 // ---------------------------------------------------------------------------
