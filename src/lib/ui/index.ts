@@ -14,3 +14,5 @@ export { default as IconButton } from './IconButton.svelte';
 export { type ButtonVariant, type ButtonSize, type ButtonDensity } from './variantClass';
 export { default as Icon } from './Icon.svelte';
 export { CHROME_ICONS, registerIcons, iconGeometry, type ChromeIconName } from './icons';
+export { default as Tabs } from './Tabs.svelte';
+export { type TabItem } from './tabsState';

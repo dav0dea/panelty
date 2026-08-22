@@ -5,22 +5,19 @@ import {
 	countPanels,
 	collectPanels,
 	firstPanelId,
-	normalize,
 	resizeFractions,
 	MIN_FRACTION,
 	MIN_PANEL_PX,
 	type LayoutNode,
-	type SplitNode,
-	type StackNode
+	type SplitNode
 } from './model';
 
 /**
  * What is left of the model once the manager owns the tree: the render vocabulary, the queries
  * every component reads it with, and the one piece of geometry a client must own — the pixel floor
- * a splitter drag is clamped to, which only the renderer can measure — plus the NORMALISATION every
- * planner's output goes through, which is here because both ends need the same answer. Placing a
- * node is the HOST's: `memoryHost` plans it over a tree in memory, and `memoryHost.test.ts` drives
- * the whole of it through the panel system.
+ * a splitter drag is clamped to, which only the renderer can measure. The tree ALGEBRA
+ * (split-or-wrap, close-with-promote, renormalize) belongs to the HOST — `memoryHost` plans it over
+ * a tree in memory, and `memoryHost.test.ts` drives the whole of it through the panel system.
  */
 
 const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
@@ -65,71 +62,6 @@ describe('queries', () => {
 		expect(p?.index).toBe(1);
 		const leaf: LayoutNode = { kind: 'panel', id: 'lone', panelType: 'empty' };
 		expect(findParent(leaf, 'lone'), 'a root has no parent').toBeNull();
-	});
-});
-
-/**
- * The rules that keep a tree drawable. They are asserted here, on shapes rather than through a
- * gesture, because every planner's output goes through them and a rule half-applied is the whole
- * of what makes a layout library feel broken.
- */
-describe('normalize', () => {
-	const P = (id: string, t = 'x'): LayoutNode => ({ kind: 'panel', id, panelType: t });
-	const S = (id: string, kids: LayoutNode[], sizes?: number[], dir: 'row' | 'column' = 'row'): SplitNode => ({
-		kind: 'split',
-		id,
-		direction: dir,
-		children: kids,
-		sizes: sizes ?? kids.map(() => 1 / kids.length)
-	});
-	const T = (id: string, kids: LayoutNode[]): StackNode => ({ kind: 'stack', id, children: kids });
-	const shape = (n: LayoutNode | null): string => {
-		if (!n) return '∅';
-		if (n.kind === 'panel') return n.id;
-		const kids = n.children.map(shape).join(' ');
-		return n.kind === 'stack' ? `tabs[${kids}]` : `${n.direction === 'row' ? 'row' : 'col'}[${kids}]`;
-	};
-
-	it('replaces a container of one BY its child', () => {
-		expect(shape(normalize(S('s', [P('a')])))).toBe('a');
-		expect(shape(normalize(T('t', [P('a')])))).toBe('a');
-	});
-
-	it('…except the root, which stays a stack so the strip it draws cannot vanish', () => {
-		expect(shape(normalize(T('root', [P('a')]), true))).toBe('tabs[a]');
-		expect(shape(normalize(T('root', [S('s', [P('a')])]), true))).toBe('tabs[a]');
-	});
-
-	it('removes a container with nothing left in it', () => {
-		expect(shape(normalize(S('s', [])))).toBe('∅');
-		expect(shape(normalize(S('s', [P('a'), S('gone', [])])))).toBe('a');
-	});
-
-	it('folds a split into its parent along the same axis, and keeps the shares honest', () => {
-		const n = normalize(S('outer', [P('a'), S('inner', [P('b'), P('c')], [0.25, 0.75])], [0.6, 0.4]));
-		expect(shape(n)).toBe('row[a b c]');
-		const sizes = n?.kind === 'split' ? n.sizes : [];
-		expect(sizes[0]).toBeCloseTo(0.6, 6);
-		expect(sizes[1], 'the inner shares take their parent’s slot').toBeCloseTo(0.1, 6);
-		expect(sizes[2]).toBeCloseTo(0.3, 6);
-		expect(sum(sizes)).toBeCloseTo(1, 6);
-	});
-
-	it('leaves a split of the OTHER axis where it is', () => {
-		expect(shape(normalize(S('outer', [P('a'), S('inner', [P('b'), P('c')], undefined, 'column')]))))
-			.toBe('row[a col[b c]]');
-	});
-
-	it('leaves a group INSIDE a page alone — folding it up would scatter its members', () => {
-		expect(shape(normalize(T('root', [P('a'), T('group', [P('b'), P('c')])]), true)))
-			.toBe('tabs[a tabs[b c]]');
-	});
-
-	it('always leaves a split’s shares summing to 1', () => {
-		const n = normalize(S('s', [P('a'), P('b')], [4, 1]));
-		const sizes = n?.kind === 'split' ? n.sizes : [];
-		expect(sizes[0]).toBeCloseTo(0.8, 6);
-		expect(sum(sizes)).toBeCloseTo(1, 6);
 	});
 });
 

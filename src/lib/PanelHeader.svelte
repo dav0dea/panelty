@@ -1,12 +1,8 @@
 <!--
-  The chrome of one slot: a tab chip per member, the content-type dropdown when there is only one,
-  the structural actions, and a right-click / long-press context menu holding every one of them.
-
-  ONE component, two placements. `variant="panel"` is the header inside a panel box — chips (or the
-  type dropdown), then Split Right, Split Down, Maximize, ⋯ and ✕. `variant="strip"` is the ROOT
-  stack's header, which a consumer hoists into its own app bar: chips and ＋, and no structural
-  action, because the workspace is not a panel. A panel and a tab group draw the same header
-  because they ARE the same thing — a stack, of one member or of several.
+  Panel header: the content-type dropdown (left), the structural actions (right), and a right-click
+  / long-press context menu exposing every structural action (split, maximize, change content,
+  close). The dropdown and the menu both build their panel-type list from the registry, so new
+  panel types appear automatically.
 
   The right end is a progressive overflow sharing `gesture/overflowFit.ts` with the app
   header rather than restating its arithmetic: Split Right, Split Down and Maximize sit in the
@@ -34,7 +30,7 @@
   horizontal divider (Split Down).
 -->
 <script lang="ts">
-	import { countPanels, type LayoutNode } from './model';
+	import { countPanels, type PanelNode } from './model';
 	import { workspace } from './workspace.svelte';
 	import { listPanelTypes, resolvePanelType } from './registry';
 	import type { MenuItem } from './menu';
@@ -43,29 +39,11 @@
 	import { Button, IconButton, Icon } from './ui';
 	import { onDestroy, untrack } from 'svelte';
 
-	let { node, variant = 'panel' }: { node: LayoutNode; variant?: 'panel' | 'strip' } = $props();
+	let { node }: { node: PanelNode } = $props();
 	const ws = workspace();
-
-	/** A stack's members, or the one member a lone panel is. */
-	const members = $derived(node.kind === 'stack' ? node.children : [node]);
-	const activeId = $derived(node.kind === 'stack' ? ws.showing(node.id) : node.id);
-	const activeNode = $derived(members.find((m) => m.id === activeId) ?? members[0]);
-	/** The type dropdown belongs to a lone panel; a group's members are named by their chips. */
-	const soloPanel = $derived(
-		variant === 'panel' && members.length === 1 && members[0]?.kind === 'panel'
-			? members[0]
-			: null
-	);
-	const chips = $derived(!soloPanel);
-	const isMax = $derived(ws.maximizedId === node.id);
-	const canClose = $derived(countPanels(ws.root) > countPanels(node));
-
-	/** What a member is CALLED. Nothing in the tree carries a name: a panel is its content's title,
-	 * and anything else is its place in the strip. A label that cannot be authored cannot go stale,
-	 * and a rename is not addressing — every op names an id. */
-	function label(member: LayoutNode, i: number): string {
-		return member.kind === 'panel' ? resolvePanelType(member.panelType).title : `Tab ${i + 1}`;
-	}
+	const type = $derived(resolvePanelType(node.panelType));
+	const isMax = $derived(ws.maximizedPanelId === node.id);
+	const canClose = $derived(countPanels(ws.active.root) > 1);
 
 	// `from` discriminates which surface opened this menu: three of them share the one ContextMenu,
 	// and only the ⋯ owns an `aria-expanded` that must not light up for the other two.
@@ -74,21 +52,17 @@
 	/** The ✕, and the menu row beside it. A panel type may TAKE OVER its own close (an agent panel
 	 * asks whether to detach or kill first, in the panel holding the terminal); everything else
 	 * closes here, as it always did. */
-	function requestClose(target: LayoutNode): void {
-		if (target.kind === 'panel' && resolvePanelType(target.panelType).confirmClose?.(target.id)) {
-			return;
-		}
-		ws.close(target.id);
+	function requestClose(): void {
+		if (type.confirmClose?.(node.id)) return;
+		ws.close(node.id);
 	}
 
 	function contentItems(): MenuItem[] {
-		const target = activeNode;
-		if (target?.kind !== 'panel') return [];
 		return listPanelTypes().map((t) => ({
 			label: t.title,
 			icon: t.icon,
-			checked: t.id === target.panelType,
-			action: () => ws.setType(target.id, t.id)
+			checked: t.id === node.panelType,
+			action: () => ws.setType(node.id, t.id)
 		}));
 	}
 
@@ -154,25 +128,18 @@
 
 	function structuralItems(): MenuItem[] {
 		const [right, down, max] = actions();
-		const content = contentItems();
 		return [
 			asRow(right),
 			asRow(down),
 			{ separator: true },
 			asRow(max),
-			...(content.length ? [{ label: 'Change content', items: content }] : []),
+			{ label: 'Change content', items: contentItems() },
 			{ separator: true },
-			{
-				label: 'Close Panel',
-				icon: 'x',
-				disabled: !canClose,
-				action: () => requestClose(activeNode ?? node)
-			}
+			{ label: 'Close Panel', icon: 'x', disabled: !canClose, action: requestClose }
 		];
 	}
 
 	function onHeaderContext(e: MouseEvent): void {
-		if (variant === 'strip') return;
 		e.preventDefault();
 		menu = { x: e.clientX, y: e.clientY, items: structuralItems() };
 	}
@@ -188,7 +155,6 @@
 	 * swallowed press would quietly drift every panel's selection scoping.
 	 */
 	const headerPress = createLongPress((at) => {
-		if (variant === 'strip') return;
 		menu = { x: at.clientX, y: at.clientY, items: structuralItems() };
 	});
 
@@ -202,38 +168,6 @@
 
 	// A press in flight must not fire into an unmounted panel (a close, a tab switch, a split).
 	onDestroy(headerPress.cancel);
-
-	// --- the drag, both ways -------------------------------------------------
-
-	let dropIndex = $state<number | null>(null);
-	const showPreview = $derived(!!ws.dragging && dropIndex !== null);
-
-	function chipIndexAt(container: HTMLElement, clientX: number): number {
-		const els = [...container.querySelectorAll<HTMLElement>('.pt-chip')];
-		for (let i = 0; i < els.length; i++) {
-			const r = els[i].getBoundingClientRect();
-			if (clientX < r.left + r.width / 2) return i;
-		}
-		return els.length;
-	}
-
-	function onBarDragOver(e: DragEvent): void {
-		if (!ws.dragging) return;
-		e.preventDefault();
-		dropIndex = chipIndexAt(e.currentTarget as HTMLElement, e.clientX);
-	}
-	function onBarDragLeave(e: DragEvent): void {
-		if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) dropIndex = null;
-	}
-	function onBarDrop(e: DragEvent): void {
-		const idx = dropIndex ?? members.length;
-		dropIndex = null;
-		if (!ws.dragging) return;
-		e.preventDefault();
-		// The stack this header DRAWS. For a lone panel that is the panel itself, and the host wraps
-		// it — so dropping on a panel's header groups the two, and dropping on a group's joins it.
-		ws.dropOn({ stack: node.id, index: idx });
-	}
 
 	// --- progressive overflow -----------------------------------------
 
@@ -275,9 +209,9 @@
 		const bar = headerEl;
 		const host = zoneEl;
 		if (!bar || !host) return;
-		const names = bar.querySelector<HTMLElement>('.pt-names');
+		const content = bar.querySelector<HTMLElement>('.content-btn');
 		const close = host.querySelector<HTMLElement>(`[data-testid="${CLOSE}"]`);
-		if (!names || !close) return;
+		if (!content || !close) return;
 		const widths = widthCache.widths(px(document.documentElement, 'font-size'));
 		if (widths.length === 0) return;
 		const ids = actions().map((a) => a.id);
@@ -285,14 +219,14 @@
 
 		const gap = px(host, 'gap');
 		// MEASURED each replan, off the boxes that do not move when an action spills: the header's
-		// own inner width, less the names region and the two gaps around the flexible spacer.
+		// own inner width, less the content dropdown and the two gaps around the flexible spacer.
 		// Never the action zone's OWN width — that is exactly what shrinks the moment an item
 		// leaves, and reading it is the oscillation bug `overflowFit.ts` opens with.
 		const zone =
 			bar.clientWidth -
 			px(bar, 'padding-left') -
 			px(bar, 'padding-right') -
-			Math.min(names.getBoundingClientRect().width, bar.clientWidth / 2) -
+			content.getBoundingClientRect().width -
 			px(bar, 'gap') * 2;
 		// …and the ✕ is charged off the top with the gap beside it, rather than given a slot in the
 		// plan. That IS the always-visible guarantee: an action can only ever spill into space the
@@ -312,13 +246,13 @@
 
 	$effect(() => {
 		const bar = headerEl;
-		if (variant === 'strip' || !bar || !zoneEl) return;
+		if (!bar || !zoneEl) return;
 		const ro = new ResizeObserver(replan);
 		ro.observe(bar);
-		// …and the names region, whose width is a term in the budget and moves on its own when the
-		// panel changes type ("Node Editor" is not "Console") or gains a tab.
-		const names = bar.querySelector<HTMLElement>('.pt-names');
-		if (names) ro.observe(names);
+		// …and the content dropdown, whose width is a term in the budget and moves on its own when
+		// the panel changes type ("Node Editor" is not "Console").
+		const content = bar.querySelector<HTMLElement>('.content-btn');
+		if (content) ro.observe(content);
 		// `untrack`: replan READS `spilled` to decide whether the plan changed, and writing it from
 		// inside a tracked call would make this effect its own dependency.
 		untrack(replan);
@@ -356,136 +290,70 @@
 
 <div
 	class="panel-header"
-	class:strip={variant === 'strip'}
 	class:maximized={isMax}
-	class:dragover={!!ws.dragging}
 	bind:this={headerEl}
-	draggable={variant === 'panel' && !!soloPanel}
+	draggable="true"
 	oncontextmenu={onHeaderContext}
 	onpointerdown={onHeaderPointerDown}
 	onpointermove={headerPress.move}
 	onpointerup={headerPress.cancel}
 	onpointercancel={headerPress.cancel}
 	ondragstart={(e) => {
-		// Don't start a move when the drag begins on a control or a chip (chips carry their own).
-		if ((e.target as HTMLElement).closest('button, select, input, .pt-chip')) {
+		// Don't start a panel move when the drag begins on a control.
+		if ((e.target as HTMLElement).closest('button, select, input')) {
 			e.preventDefault();
 			return;
 		}
-		ws.dragging = { node: node.id };
+		ws.dragging = { kind: 'panel', workspaceId: ws.state.activeWorkspaceId, panelId: node.id };
 	}}
 	ondragend={() => (ws.dragging = null)}
-	ondragover={onBarDragOver}
-	ondragleave={onBarDragLeave}
-	ondrop={onBarDrop}
 	role="toolbar"
 	tabindex="-1"
-	aria-label={variant === 'strip' ? 'Workspace tabs' : 'Panel header'}
-	data-testid={variant === 'strip' ? 'workspace-tabs' : 'panel-header'}
+	aria-label="Panel header"
+	data-testid="panel-header"
 >
-	<div class="pt-names" role={chips ? 'tablist' : undefined}>
-		{#if soloPanel}
-			<Button
+	<Button variant="ghost" class="content-btn" onclick={openContent} title="Change panel content">
+		{#if type.icon}<span class="ic"><Icon name={type.icon} /></span>{/if}
+		<span class="title">{type.title}</span>
+		<span class="caret"><Icon name="chevron-down" /></span>
+	</Button>
+	<div class="spacer"></div>
+	<div class="hdr-actions" bind:this={zoneEl}>
+		{#each actions() as a (a.id)}
+			<IconButton
 				variant="ghost"
-				class="content-btn"
-				onclick={openContent}
-				title="Change panel content"
+				density="chrome"
+				class={`hdr-btn${isSpilled(a.id) ? ' spilled' : ''}`}
+				data-testid={a.id}
+				title={a.label}
+				label={a.name}
+				aria-pressed={a.pressed}
+				onclick={a.run}><Icon name={a.icon} /></IconButton
 			>
-				{#if resolvePanelType(soloPanel.panelType).icon}
-					<span class="ic"><Icon name={resolvePanelType(soloPanel.panelType).icon!} /></span>
-				{/if}
-				<span class="title">{resolvePanelType(soloPanel.panelType).title}</span>
-				<span class="caret"><Icon name="chevron-down" /></span>
-			</Button>
-		{:else}
-			{#each members as member, i (member.id)}
-				{#if showPreview && dropIndex === i}
-					<div class="pt-preview" aria-hidden="true"></div>
-				{/if}
-				<div
-					class="pt-chip"
-					class:active={member.id === activeId}
-					role="tab"
-					aria-selected={member.id === activeId}
-					tabindex={member.id === activeId ? 0 : -1}
-					draggable="true"
-					onclick={() => ws.show(node.id, member.id)}
-					onkeydown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
-							e.preventDefault();
-							ws.show(node.id, member.id);
-						}
-					}}
-					ondragstart={() => (ws.dragging = { node: member.id })}
-					ondragend={() => (ws.dragging = null)}
-				>
-					<span class="pt-label">{label(member, i)}</span>
-					{#if canClose || members.length > 1}
-						<button
-							type="button"
-							class="pt-close"
-							tabindex="-1"
-							aria-label="Close tab"
-							title="Close tab"
-							onclick={(e) => {
-								e.stopPropagation();
-								requestClose(member);
-							}}><Icon name="x" /></button
-						>
-					{/if}
-				</div>
-			{/each}
-			{#if showPreview && dropIndex === members.length}
-				<div class="pt-preview" aria-hidden="true"></div>
-			{/if}
-			<button
-				type="button"
-				class="pt-add"
-				aria-label="New tab"
-				title="New tab"
-				onclick={() => ws.add(node.id)}><Icon name="plus" /></button
-			>
-		{/if}
+		{/each}
+		<!-- Not resident: it goes when there is nothing behind it. It stays in the DOM either way so
+		     its width can be measured, which is the one thing the plan needs from it. -->
+		<IconButton
+			variant="ghost"
+			density="chrome"
+			class={`hdr-btn${spilled.size ? '' : ' spilled'}`}
+			data-testid={TRIGGER}
+			aria-expanded={menu?.from === 'overflow'}
+			title="More panel actions"
+			label="More panel actions"
+			onclick={openOverflow}><Icon name="ellipsis" /></IconButton
+		>
+		<IconButton
+			variant="ghost"
+			density="chrome"
+			class="hdr-btn"
+			data-testid={CLOSE}
+			title="Close panel"
+			label="Close panel"
+			disabled={!canClose}
+			onclick={requestClose}><Icon name="x" /></IconButton
+		>
 	</div>
-	{#if variant === 'panel'}
-		<div class="spacer"></div>
-		<div class="hdr-actions" bind:this={zoneEl}>
-			{#each actions() as a (a.id)}
-				<IconButton
-					variant="ghost"
-					density="chrome"
-					class={`hdr-btn${isSpilled(a.id) ? ' spilled' : ''}`}
-					data-testid={a.id}
-					title={a.label}
-					label={a.name}
-					aria-pressed={a.pressed}
-					onclick={a.run}><Icon name={a.icon} /></IconButton
-				>
-			{/each}
-			<!-- Not resident: it goes when there is nothing behind it. It stays in the DOM either way so
-			     its width can be measured, which is the one thing the plan needs from it. -->
-			<IconButton
-				variant="ghost"
-				density="chrome"
-				class={`hdr-btn${spilled.size ? '' : ' spilled'}`}
-				data-testid={TRIGGER}
-				aria-expanded={menu?.from === 'overflow'}
-				title="More panel actions"
-				label="More panel actions"
-				onclick={openOverflow}><Icon name="ellipsis" /></IconButton
-			>
-			<IconButton
-				variant="ghost"
-				density="chrome"
-				class="hdr-btn"
-				data-testid={CLOSE}
-				title="Close panel"
-				label="Close panel"
-				disabled={!canClose}
-				onclick={() => requestClose(activeNode ?? node)}><Icon name="x" /></IconButton
-			>
-		</div>
-	{/if}
 </div>
 
 {#if menu}
@@ -499,35 +367,27 @@
 		height: var(--panelty-panel-header-h, var(--panelty-panel-header-h-default));
 		flex: 0 0 auto;
 		padding: 0 var(--panelty-space-2, var(--panelty-space-2-default));
-		/* The TOP rung of the panel's own ladder — body `--panelty-surface-1`, content toolbar
-		   `--panelty-surface-2`, this `--panelty-surface-3` — so each adjacency is a real step and
-		   none needs a hairline, not even the one 26px inside the panel edge. */
+		/* The TOP rung of the panel's own ladder — body `--panelty-surface-1`, content toolbar `--panelty-surface-2`,
+		   this `--panelty-surface-3` — so each adjacency is a real step and none needs a hairline, not
+		   even the one 26px inside the panel edge. `--panelty-surface-2` put this byte-identical to the `Bar`
+		   that four of the six panel types render flush beneath it, which is the same "border deleted,
+		   nothing behind it" defect one level down; a step is what the deleted border trades FOR. */
 		background: var(--panelty-surface-3, var(--panelty-surface-3-default));
 		gap: var(--panelty-space-1, var(--panelty-space-1-default));
 		user-select: none;
 		cursor: grab;
-		min-width: 0;
-	}
-	/* The strip is the ROOT group's header, hoisted into the consumer's app bar: it blends with the
-	   bar rather than painting its own header surface, and it is never a drag handle itself. */
-	.panel-header.strip {
-		background: transparent;
-		height: 100%;
-		padding: 0;
-		cursor: default;
 	}
 	.panel-header:active {
 		cursor: grabbing;
-	}
-	.panel-header.strip:active {
-		cursor: default;
 	}
 	/* Maximized is a MODE, not a selection: this panel is the only one on screen, and with the rest
 	   of the layout gone there is nothing left to compare it against — the state is invisible unless
 	   the chrome carries it. A faint accent wash over the header's own rung, because accent IS state
 	   here, and it mixes INTO `--panelty-surface-3` rather than layering on it so the strip keeps its
-	   step on the elevation ladder. It is a fill and the active-panel marker is a ring, so the two
-	   read as different things on a panel that is necessarily both. */
+	   step on the elevation ladder. Flat, like every other surface the chrome paints: the texture
+	   this first reached for is a gradient, which reads as a different material. It is a fill and
+	   the active-panel marker is a ring, so the two read as different things on a panel that is
+	   necessarily both. */
 	.panel-header.maximized {
 		background: color-mix(
 			in srgb,
@@ -535,122 +395,16 @@
 			var(--panelty-surface-3, var(--panelty-surface-3-default))
 		);
 	}
-	/* A header is a drop target for the whole of a drag: dropping here tabs the two together. */
-	.panel-header.dragover {
-		background: color-mix(
-			in srgb,
-			var(--panelty-accent, var(--panelty-accent-default)) 7%,
-			transparent
-		);
-	}
-
-	/* The names region — a dropdown when this stack holds one panel, chips when it holds several.
-	   It is the header's SHRINK ABSORBER either way, so a long name gives way to an ellipsis or to
-	   a scroll instead of pushing the ✕ out of the panel. */
-	.pt-names {
-		display: flex;
-		align-items: center;
-		min-width: 0;
-		overflow-x: auto;
-		overflow-y: hidden;
-		scrollbar-width: none;
-		gap: var(--panelty-space-1, var(--panelty-space-1-default));
-	}
-	.panel-header.strip .pt-names {
-		flex: 1 1 auto;
-		height: 100%;
-	}
-
-	.pt-chip {
-		display: flex;
-		align-items: center;
-		flex: 0 0 auto;
-		gap: var(--panelty-space-1, var(--panelty-space-1-default));
-		padding: 0 var(--panelty-space-2, var(--panelty-space-2-default));
-		min-height: var(--panelty-chrome-control-h, var(--panelty-chrome-control-h-default));
-		min-width: 0;
-		white-space: nowrap;
-		border-radius: var(--panelty-radius-sm, var(--panelty-radius-sm-default));
-		font-size: var(--panelty-fs-chrome, var(--panelty-fs-chrome-default));
-		color: var(--panelty-text-dim, var(--panelty-text-dim-default));
-		cursor: pointer;
-	}
-	/* The active member drops to the body surface beneath it — one connected piece, no divider. */
-	.pt-chip.active {
-		background: var(--panelty-bg, var(--panelty-bg-default));
-		color: var(--panelty-text, var(--panelty-text-default));
-	}
-	.pt-chip:hover {
-		color: var(--panelty-text, var(--panelty-text-default));
-	}
-	.pt-chip:focus-visible,
-	.pt-close:focus-visible,
-	.pt-add:focus-visible {
-		outline: var(--panelty-focus-width, var(--panelty-focus-width-default)) solid
-			var(--panelty-focus-ink, var(--panelty-focus-ink-default));
-		outline-offset: 1px;
-	}
-	.pt-label {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	/* The frozen chrome geometry: a strip is shorter than the touch floor by construction, so its
-	   controls state their box here and take the floor back under a coarse pointer. */
-	.pt-close,
-	.pt-add {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		flex: 0 0 auto;
-		width: var(--panelty-chrome-control-h, var(--panelty-chrome-control-h-default));
-		height: var(--panelty-chrome-control-h, var(--panelty-chrome-control-h-default));
-		border: 0;
-		padding: 0;
-		background: none;
-		color: inherit;
-		cursor: pointer;
-		border-radius: var(--panelty-radius-sm, var(--panelty-radius-sm-default));
-	}
-	@media (hover: none) and (pointer: coarse) {
-		.pt-close,
-		.pt-add {
-			width: var(--panelty-hit, var(--panelty-hit-default));
-			height: var(--panelty-hit, var(--panelty-hit-default));
-		}
-		.pt-chip {
-			min-height: var(--panelty-hit, var(--panelty-hit-default));
-		}
-		/* A finger has no hover, so the ✕ rests open rather than waiting for one. */
-		.pt-close {
-			opacity: 1;
-		}
-	}
-	.pt-close {
-		opacity: 0;
-	}
-	.pt-chip:hover .pt-close,
-	.pt-chip.active .pt-close,
-	.pt-close:focus-visible {
-		opacity: 1;
-	}
-	/* A real slot at the drop index, so it is clear where the drop lands — not a thin sliver. */
-	.pt-preview {
-		flex: 0 0 auto;
-		width: 3rem;
-		border-radius: var(--panelty-radius-sm, var(--panelty-radius-sm-default));
-		background: color-mix(
-			in srgb,
-			var(--panelty-accent, var(--panelty-accent-default)) 18%,
-			transparent
-		);
-	}
-
-	/* The primitives keep the frozen 20px control geometry of the 26px bar. Under a coarse pointer
-	   the bar itself grows to --panelty-hit, so the floors apply unchanged there. The `button` tag
-	   qualifier is load-bearing: without it this ties with the primitive's own `.ui-btn.s-md`
-	   padding, and the two rules live in separate built CSS chunks — a tie there is settled by the
-	   emitted <link> order, not by the source. */
+	/* The primitives keep the frozen 20px control geometry of the 26px bar. Under a coarse
+	   pointer the bar itself grows to --panelty-hit, so the floors apply unchanged there.
+	   The `button` tag qualifier is load-bearing: without it this ties with the primitive's own
+	   `.ui-btn.s-md` padding, and the two rules live in separate built CSS chunks — a tie there
+	   is settled by the emitted <link> order, not by the source.
+	   (Button has no density axis: this pin is padding + gap geometry, not a hit floor.)
+	   `min-width: 0` is the overflow's other half: the dropdown is the header's SHRINK ABSORBER, so
+	   a long panel-type name gives way to an ellipsis instead of pushing the ✕ out of the panel —
+	   the same trade the app header's status cluster makes, and the reason the ✕ can be promised at
+	   every width rather than at every width anyone happened to test. */
 	.panel-header :global(button.content-btn) {
 		height: var(--panelty-chrome-control-h, var(--panelty-chrome-control-h-default));
 		padding: 0 var(--panelty-space-3, var(--panelty-space-3-default));
@@ -666,9 +420,9 @@
 		color: var(--panelty-text, var(--panelty-text-default));
 	}
 	/* opacity: intentional — the type icon and the caret are quieted BELOW the title they sit beside
-	   (a hierarchy, not a disabled state); --panelty-disabled-opacity would read as "this header is
-	   inert". `display: flex` collapses each span onto its icon's own box, so neither adds the line
-	   box a text glyph used to need inside a 20px header button. */
+	   (a hierarchy, not a disabled state); --panelty-disabled-opacity would read as "this header is inert".
+	   `display: flex` collapses each span onto its icon's own box, so neither adds the line box a
+	   text glyph used to need inside a 20px header button. */
 	.ic,
 	.caret {
 		display: flex;
@@ -690,7 +444,6 @@
 	}
 	.spacer {
 		flex: 1;
-		min-width: 0;
 	}
 	/* The overflow-able actions and the trigger they spill into, in one rigid box the budget above
 	   is measured AGAINST rather than FROM. */

@@ -1,17 +1,15 @@
 /**
- * panelty — a panel workspace for Svelte.
+ * panelty — a tab + panel workspace for Svelte.
  *
- * ONE tree, whose root is a stack. A stack shows one child at a time and draws the rest as tabs, so
- * a workspace tab is a child of the root stack and there is no second kind of thing: tabbing a
- * panel onto another panel's header and dropping one on the app's tab bar are the same move.
- *
- * `<Panels>` draws the page the root stack is showing. `<Tabs>` draws the root stack's own header,
- * for a consumer that wants it hoisted into an app bar; it is the same header every group draws.
+ * Three components compose: `<Tabs>` alone is a tab strip, `<Panels>` alone is a splittable panel
+ * tree, and `<Panels>` inside `<Tabs>` is a workspace — the cross-boundary drags exist there and are
+ * UNEXPRESSIBLE anywhere else, because the drag bus one publishes is what the other looks for.
  *
  * The package holds no tree and writes nothing. It draws the arrangement it is handed, recognises
  * the gestures over it, and raises each one through a [`LayoutHost`] — so whoever implements that
- * owns persistence, concurrency and undo. The panels themselves are the consumer's too:
- * `registerPanel` takes a component and an id, and nothing in here knows what any of them draw.
+ * owns persistence, concurrency, undo and what a tab is CALLED. The panels themselves are the
+ * consumer's too: `registerPanel` takes a component and an id, and nothing in here knows what any
+ * of them draw.
  *
  * Styling is a namespaced custom-property contract — import `panelty/tokens.css` for the look it
  * ships with, then override `--panelty-*` to wear your own. See that file.
@@ -23,7 +21,7 @@ export { default as Tabs } from './WorkspaceTabs.svelte';
 export { workspace, type DragRef, type LayoutIntent, type Viewpoint } from './workspace.svelte';
 
 // --- the host: every gesture leaves through here -------------------------------------------------
-export type { LayoutHost, AddAt, Landing, LayoutIn } from './host';
+export type { LayoutHost, TabHost, PanelHost, TabRef, Landing, TabsIn } from './host';
 // …and one that needs nothing behind it, for a workspace with no persistence to answer to.
 export { memoryHost, type MemoryHostOptions } from './memoryHost';
 
@@ -31,7 +29,6 @@ export { memoryHost, type MemoryHostOptions } from './memoryHost';
 export {
 	MIN_FRACTION,
 	MIN_PANEL_PX,
-	childrenOf,
 	collectPanels,
 	countPanels,
 	findNode,
@@ -39,16 +36,13 @@ export {
 	findParent,
 	firstPanelId,
 	firstPanelIn,
-	isBranch,
-	normalize,
 	resizeFractions,
-	stackOf,
-	type BranchNode,
 	type Direction,
 	type LayoutNode,
 	type PanelNode,
 	type SplitNode,
-	type StackNode
+	type Workspace,
+	type WorkspaceState
 } from './model';
 export { arrayToPath, asStateObject, linkedNodeName, pathToArray } from './panelState';
 
@@ -72,13 +66,17 @@ export {
 	Button,
 	IconButton,
 	Icon,
+	// `Tabs` is the WORKSPACE strip above — the one wired to the drag bus. This is the bare tab bar
+	// it is built on, which a consumer also uses wherever it wants tabs that are not a workspace.
+	Tabs as TabStrip,
 	CHROME_ICONS,
 	registerIcons,
 	iconGeometry,
 	type ButtonVariant,
 	type ButtonSize,
 	type ButtonDensity,
-	type ChromeIconName
+	type ChromeIconName,
+	type TabItem
 } from './ui';
 
 // --- the leaf layer, exported for the same reason the chrome is ----------------------------------

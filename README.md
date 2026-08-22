@@ -1,11 +1,11 @@
 # panelty
 
-A panel workspace for Svelte 5.
+A tab + panel workspace for Svelte 5.
 
-Split a panel, drag one onto another's edge, drop one on another's header to tab them together, drag
-the seam between two. What panelty does not do is decide what any of that MEANS: it holds no tree
-and writes nothing. It draws the arrangement you hand it, recognises the gesture over it, and raises
-the gesture at a host you implement — so persistence, concurrency and undo are yours.
+Split a panel, drag one onto another's edge, tear one off onto the tab bar, drag the seam between
+two. What panelty does not do is decide what any of that MEANS: it holds no tree and writes nothing.
+It draws the arrangement you hand it, recognises the gesture over it, and raises the gesture at a
+host you implement — so persistence, concurrency, undo and what a tab is called are yours.
 
 ```svelte
 <script lang="ts">
@@ -20,25 +20,19 @@ the gesture at a host you implement — so persistence, concurrency and undo are
 <Panels />
 ```
 
-## One tree
+## The three shapes
 
-The arrangement is one tree whose root is a **stack**. A stack gives its whole slot to ONE child and
-draws the rest as tabs; a **split** divides its slot between N children along an axis; a **panel** is
-a leaf. A workspace tab is a child of the root stack and nothing else — so dropping a panel on
-another panel's header and dropping one on the app's tab bar are the same move, with a different
-stack named.
-
-`<Panels>` draws the page the root stack is showing. `<Tabs>` draws the root stack's own header, for
-an app that wants it hoisted into its title bar; it is the same header every group draws.
-
-Which child a stack shows is the VIEWER's, not the arrangement's — it never reaches the host, so two
-clients on one document look at different tabs.
+`<Tabs>` alone is a tab strip. `<Panels>` alone is a splittable panel tree. `<Panels>` inside
+`<Tabs>` is a workspace — and only there do the cross-boundary drags exist, because the drag bus one
+publishes is what the other looks for. There is no `enableTabDragging` flag: a gesture that spans
+two components you did not compose is not disabled, it is unexpressible.
 
 ## The host
 
-One contract, because there is one kind of thing. Every method answers whether the write LANDED — a
-refusal is ordinary (closing the last panel, a peer having taken what the gesture names) and the
-panel system uses the answer to decide where to put the focus, never to retry.
+Two contracts, each naming only what its own component can trigger. `TabHost` is panel-free by
+construction; `PanelHost` is tab-free. Every method answers whether the write LANDED — a refusal is
+ordinary (closing a tab's last panel, a peer having taken what the gesture names) and the panel
+system uses the answer to decide where to put the focus, never to retry.
 
 `memoryHost()` is one that keeps the tree in memory and hands it straight back. It is the whole of
 the contract implemented over a plain tree — useful on its own, and the thing that proves the port

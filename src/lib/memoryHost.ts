@@ -14,41 +14,41 @@
  * host with no history has no honest one to offer. A consumer that wants it implements the same
  * contract over its own command log.
  */
-import type { AddAt, Landing, LayoutHost } from './host';
+import type { Landing, LayoutHost, TabRef } from './host';
 import {
-	countPanels,
 	findNode,
 	findParent,
-	normalize,
 	type Direction,
 	type LayoutNode,
-	type StackNode
+	type Workspace
 } from './model';
 import { workspace } from './workspace.svelte';
 
 /** The panel type a fresh tab starts with, and the one a split births. Both are the CONSUMER's
  *  vocabulary — these are the neutral spellings, overridable per call and per host. */
 export interface MemoryHostOptions {
-	root?: StackNode;
+	tabs?: Workspace[];
 	defaultPanelType?: string;
 	emptyPanelType?: string;
 	/** Where the plan goes once it is made. Defaults to the panel system's own store. */
-	push?: (root: StackNode) => void;
+	push?: (tabs: Workspace[]) => void;
 }
 
 export function memoryHost(opts: MemoryHostOptions = {}): LayoutHost {
 	const empty = opts.emptyPanelType ?? 'empty';
 	const fresh = opts.defaultPanelType ?? empty;
-	const push = opts.push ?? ((r: StackNode) => workspace().syncFromDoc(r));
+	const push = opts.push ?? ((t: Workspace[]) => workspace().syncFromDoc(t));
 
+	let tabs: Workspace[] = opts.tabs ? structuredClone(opts.tabs) : [];
 	// One counter for every id this host mints, never reused: a viewpoint, a subscription and an
 	// undo entry are all keyed by id, so a recycled one is a stale reference that resolves.
 	let seq = 0;
 	const mint = (kind: string): string => `${kind}-${++seq}`;
 
-	let root: StackNode = opts.root ? structuredClone(opts.root) : stack([panel(fresh)]);
-	if (opts.root) seq = highestSeq(root);
-	// Handed over at once. The panel system has no `getLayout` to pull with — the arrangement arrives
+	// Seeded with one tab, so a consumer that passes nothing still has something to draw.
+	if (tabs.length === 0) tabs = [{ id: mint('tab'), name: 'Tab 1', root: panel(fresh) }];
+	else seq = highestSeq(tabs);
+	// Handed over at once. The panel system has no `getTabs` to pull with — the arrangement arrives
 	// as a push, because for every other host it arrives as one (a delta, a snapshot, a message) and
 	// a pull would make every render re-read whatever is behind it.
 	commit();
@@ -57,49 +57,41 @@ export function memoryHost(opts: MemoryHostOptions = {}): LayoutHost {
 		return { kind: 'panel', id: mint('panel'), panelType };
 	}
 
-	function stack(children: LayoutNode[]): StackNode {
-		return { kind: 'stack', id: mint('stack'), children };
-	}
-
-	/** Apply the shared rules and hand the result over. The ROOT survives them by definition. */
 	function commit(): true {
-		const next = normalize(root, true);
-		root = (next?.kind === 'stack' ? next : stack(next ? [next] : [panel(fresh)])) as StackNode;
-		push(structuredClone(root));
+		push(structuredClone(tabs));
 		return true;
 	}
 
-	/** Swap the node with id `id` for `next`, wherever it sits. The root is never swapped: it is a
-	 * stack for the tree's whole life. */
-	function replace(id: string, next: LayoutNode): boolean {
-		const at = findParent(root, id);
-		if (!at) return false;
-		at.parent.children[at.index] = next;
-		return true;
+	/** The tab holding `id`, and the tab itself when `id` names one. */
+	function tabOf(id: string): Workspace | undefined {
+		return tabs.find((t) => t.id === id || !!findNode(t.root, id));
+	}
+
+	function freeName(): string {
+		const taken = new Set(tabs.map((t) => t.name));
+		for (let n = 1; ; n += 1) if (!taken.has(`Tab ${n}`)) return `Tab ${n}`;
 	}
 
 	/**
-	 * Lift `id` out of the tree, closing up behind it. Returns the subtree, or null when it holds
-	 * the last panel there is — the one thing that has nowhere to go.
+	 * Lift `id` out of the tree, closing up behind it: a split left with one child is replaced BY
+	 * that child, because a split of one is not a split. Returns the subtree, or null when `id` is
+	 * the last panel on the last tab — the one thing that has nowhere to go.
 	 */
 	function take(id: string): LayoutNode | null {
-		const node = findNode(root, id);
-		const at = findParent(root, id);
-		if (!node || !at) return null;
-		if (countPanels(node) >= countPanels(root)) return null;
-		at.parent.children.splice(at.index, 1);
-		if (at.parent.kind === 'split') at.parent.sizes.splice(at.index, 1);
-		return node;
-	}
-
-	/** The stack `id` names, WRAPPING it when it is not one — dropping on a lone panel's header
-	 * makes a group of the two, and dropping on a stack's header joins the group already there. */
-	function asStack(id: string): StackNode | null {
-		const node = findNode(root, id);
-		if (!node) return null;
-		if (node.kind === 'stack') return node;
-		const wrapper = stack([node]);
-		return replace(id, wrapper) ? wrapper : null;
+		const tab = tabOf(id);
+		if (!tab) return null;
+		if (tab.root.id === id) {
+			if (tabs.length <= 1) return null;
+			tabs = tabs.filter((t) => t !== tab);
+			return tab.root;
+		}
+		const at = findParent(tab.root, id);
+		if (!at) return null;
+		const [gone] = at.parent.children.splice(at.index, 1);
+		at.parent.sizes.splice(at.index, 1);
+		normalize(at.parent.sizes);
+		if (at.parent.children.length === 1) replace(tab, at.parent.id, at.parent.children[0]);
+		return gone;
 	}
 
 	/** Put `node` beside `target`, splitting along `direction`; `share` is the newcomer's. */
@@ -110,15 +102,18 @@ export function memoryHost(opts: MemoryHostOptions = {}): LayoutHost {
 		before: boolean,
 		share: number
 	): boolean {
-		const at = findParent(root, target);
-		if (at && at.parent.kind === 'split' && at.parent.direction === direction) {
-			const host = at.parent;
+		const tab = tabOf(target);
+		if (!tab) return false;
+		const at = findParent(tab.root, target);
+		const host = at?.parent;
+		if (host && host.direction === direction) {
 			const i = at.index + (before ? 0 : 1);
 			host.children.splice(i, 0, node);
 			host.sizes.splice(i, 0, share);
+			normalize(host.sizes);
 			return true;
 		}
-		const existing = findNode(root, target);
+		const existing = findNode(tab.root, target);
 		if (!existing) return false;
 		const split: LayoutNode = {
 			kind: 'split',
@@ -127,41 +122,79 @@ export function memoryHost(opts: MemoryHostOptions = {}): LayoutHost {
 			children: before ? [node, existing] : [existing, node],
 			sizes: before ? [share, 1 - share] : [1 - share, share]
 		};
-		return replace(target, split);
-	}
-
-	function place(node: LayoutNode, at: string, opts: AddAt): boolean {
-		if (opts.direction) {
-			return insertBeside(node, at, opts.direction, opts.placeBefore ?? false, opts.ratio ?? 0.5);
-		}
-		const host = asStack(at);
-		if (!host) return false;
-		const i = opts.index ?? host.children.length;
-		host.children.splice(Math.max(0, Math.min(i, host.children.length)), 0, node);
+		replace(tab, target, split);
 		return true;
 	}
 
+	/** Swap the node with id `id` for `next`, wherever it sits — including a tab's root. */
+	function replace(tab: Workspace, id: string, next: LayoutNode): void {
+		if (tab.root.id === id) {
+			tab.root = next;
+			return;
+		}
+		const at = findParent(tab.root, id);
+		if (at) at.parent.children[at.index] = next;
+	}
+
+	function normalize(sizes: number[]): void {
+		const total = sizes.reduce((a, b) => a + b, 0);
+		if (total > 0) for (let i = 0; i < sizes.length; i++) sizes[i] /= total;
+	}
+
 	return {
-		async addPanel(at, opts) {
-			const born = panel(opts?.panelType ?? (opts?.direction ? empty : fresh));
-			if (!place(born, at, opts ?? {})) return null;
+		// --- tabs ---------------------------------------------------------------------------------
+		async addTab(o): Promise<TabRef | null> {
+			const root = panel(o?.panelType ?? fresh);
+			const tab: Workspace = { id: mint('tab'), name: freeName(), root };
+			tabs.splice(o?.index ?? tabs.length, 0, tab);
+			commit();
+			return { tab: tab.id, panel: root.id };
+		},
+
+		async removeTab(tab) {
+			if (tabs.length <= 1 || !tabs.some((t) => t.id === tab)) return false;
+			tabs = tabs.filter((t) => t.id !== tab);
+			return commit();
+		},
+
+		async renameTab(tab, name) {
+			const t = tabs.find((x) => x.id === tab);
+			const trimmed = name.trim();
+			if (!t || !trimmed || tabs.some((x) => x !== t && x.name === trimmed)) return false;
+			t.name = trimmed;
+			return commit();
+		},
+
+		async reorderTab(tab, toIndex) {
+			const from = tabs.findIndex((t) => t.id === tab);
+			if (from < 0) return false;
+			const [moved] = tabs.splice(from, 1);
+			tabs.splice(Math.max(0, Math.min(toIndex, tabs.length)), 0, moved);
+			return commit();
+		},
+
+		// --- panels -------------------------------------------------------------------------------
+		async splitPanel(target, direction, placeBefore, ratio) {
+			const born = panel(empty);
+			if (!insertBeside(born, target, direction, placeBefore, ratio)) return null;
 			commit();
 			return born.id;
 		},
 
-		async removePanel(node) {
-			return take(node) === null ? false : commit();
+		async removePanel(target) {
+			return take(target) === null ? false : commit();
 		},
 
 		async resizeSplit(split, fractions) {
-			const node = findNode(root, split);
+			const node = subtreeOf(split);
 			if (node?.kind !== 'split' || node.children.length !== fractions.length) return false;
 			node.sizes = [...fractions];
+			normalize(node.sizes);
 			return commit();
 		},
 
 		async setPanel(target, patch) {
-			const node = findNode(root, target);
+			const node = subtreeOf(target);
 			if (node?.kind !== 'panel') return false;
 			// A new TYPE clears the old type's state: the two are one thing, and a stale bag under a
 			// panel that no longer reads it is a value nothing can ever remove.
@@ -174,30 +207,37 @@ export function memoryHost(opts: MemoryHostOptions = {}): LayoutHost {
 		},
 
 		async movePanel(subtree, to: Landing) {
-			const target = 'beside' in to ? to.beside : to.stack;
-			const source = findNode(root, subtree);
-			// Onto itself, or into its own descendant — the second would make a cycle.
-			if (!source || subtree === target || findNode(source, target)) return false;
+			if ('panel' in to) {
+				const source = subtreeOf(subtree);
+				// Onto itself, or into its own descendant — the second would make a cycle.
+				if (!source || subtree === to.panel || findNode(source, to.panel)) return false;
+			}
 			// Lifted FIRST, as any split-aware planner must: closing up behind the source can promote
 			// a sibling into the very slot the newcomer is about to share.
 			const moved = take(subtree);
 			if (!moved) return false;
-			const landing =
-				'beside' in to
-					? { direction: to.direction, placeBefore: to.placeBefore, ratio: 0.5 }
-					: { index: to.index };
-			if (!place(moved, target, landing)) return false;
+			if ('newTab' in to) {
+				tabs.splice(to.newTab, 0, { id: mint('tab'), name: freeName(), root: moved });
+				return commit();
+			}
+			if (!insertBeside(moved, to.panel, to.direction, to.placeBefore, 0.5)) return false;
 			return commit();
 		}
 	};
 
+	function subtreeOf(id: string): LayoutNode | null {
+		const tab = tabOf(id);
+		return (tab && findNode(tab.root, id)) ?? null;
+	}
+
 	/** Continue a handed-over tree's numbering rather than colliding with it. */
-	function highestSeq(from: LayoutNode): number {
+	function highestSeq(from: Workspace[]): number {
 		let top = 0;
-		for (const id of ids(from)) {
-			const n = Number(id.split('-').pop());
-			if (Number.isFinite(n)) top = Math.max(top, n);
-		}
+		for (const t of from)
+			for (const id of [t.id, ...ids(t.root)]) {
+				const n = Number(id.split('-').pop());
+				if (Number.isFinite(n)) top = Math.max(top, n);
+			}
 		return top;
 	}
 
