@@ -1,6 +1,6 @@
 {
 	"name": "panelty",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "A tab + panel workspace for Svelte: split, drag, tear off, and hand every gesture to a host you own.",
 	"license": "MIT",
 	"author": "Philipp Thölke",

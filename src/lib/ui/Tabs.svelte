@@ -256,7 +256,6 @@
 	   touchscreen aims at the tab itself; the coarse door below rests it fully open instead
 	   (a hover reveal is unreachable on a device with no hover). */
 	.ui-tab-close {
-		position: relative; /* anchor for the coarse-pointer hit-rect ::after */
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
@@ -352,20 +351,26 @@
 	}
 
 	/* Touch. The ✕ is hover-revealed, so on a device with no hover it is not merely
-	   invisible — it is unreachable. Resting its ink open (and its pointer live) is the whole
-	   fix; the box was already reserved above. The rename input is raised to 16px so iOS does
-	   not force-zoom the page on focus. */
+	   invisible — it is unreachable. Resting its ink open (and its pointer live) is half the
+	   fix; a 16px seat a finger cannot land on is the other half. The rename input is raised
+	   to 16px so iOS does not force-zoom the page on focus. */
 	@media (hover: none) and (pointer: coarse) {
+		/* Rested open, and floored on its BOX — both axes. This was IconButton's `::after` hit rect,
+		   and a chrome strip is the one place that idiom does not hold: the pseudo is invisible to
+		   anything that asks a control its size, and the first ancestor hiding its overflow clips
+		   it away, so a ✕ that measured 16px wide claimed 44 and nothing could tell. The box is the
+		   claim nothing can quietly drop. The ✕ does grow, then — the same restore the ＋ takes
+		   below — and the negative block margin eats the pill's own vertical padding so it SPANS
+		   the pill instead of pushing it past the floor stated there (a host's blanket
+		   `button { min-height }` was doing exactly that, which is how the ✕ came to measure 16
+		   BY 44). The ink does not grow: it is still the 12px glyph on a transparent ground, and
+		   under a fine pointer none of this exists. */
 		.ui-tab-close {
 			opacity: 1;
 			pointer-events: auto;
-		}
-		/* The ✕ cannot grow — it sits inside the pill — so IconButton's hit-rect idiom carries its
-		   tap target out to --panelty-hit while the paint stays 16px. */
-		.ui-tab-close::after {
-			content: '';
-			position: absolute;
-			inset: calc((var(--panelty-hit, var(--panelty-hit-default)) - 100%) / -2);
+			width: var(--panelty-hit, var(--panelty-hit-default));
+			height: var(--panelty-hit, var(--panelty-hit-default));
+			margin-block: calc(-1 * var(--panelty-space-3, var(--panelty-space-3-default)));
 		}
 		/* The ＋ CAN grow: the pills beside it already stand at --panelty-hit under coarse, so the dense
 		   22px box is a fine-pointer affordance only and the floor comes back here — the same
