@@ -27,13 +27,16 @@
 		y,
 		items,
 		onClose,
-		root = true
+		root = true,
+		closeOnSelect = true
 	}: {
 		x: number;
 		y: number;
 		items: MenuItem[];
 		onClose: () => void;
 		root?: boolean;
+		/** Keep the menu open while the user changes a selection. */
+		closeOnSelect?: boolean;
 	} = $props();
 
 	// The two gutters are decided ONCE PER MENU, not per row: a row with no icon still reserves the
@@ -81,7 +84,7 @@
 			return;
 		}
 		item.action?.();
-		onClose();
+		if (closeOnSelect) onClose();
 	}
 
 	/** Hover-to-expand, for a MOUSE only. `pointerenter` rather than `mouseenter` so the pointer
@@ -151,7 +154,7 @@
 	{#if openSub}
 		{@const sub = items[openSub.index]}
 		{#if sub?.items}
-			<Self x={openSub.x} y={openSub.y} items={sub.items} {onClose} root={false} />
+			<Self x={openSub.x} y={openSub.y} items={sub.items} {onClose} {closeOnSelect} root={false} />
 		{/if}
 	{/if}
 </div>
