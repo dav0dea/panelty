@@ -4,10 +4,11 @@
  * The panel framework knows nothing about any specific panel; it only knows
  * how to render whatever components are registered here. To add a new panel
  * type (now or as a future mod) you write a Svelte component honoring
- * `PanelProps` and call `registerPanel({...})` once at startup. The content
+ * `PanelProps` and call `registerPanel({...})` when the type becomes available. The content
  * dropdown, context menu, and layout persistence all pick it up automatically.
  */
 import type { Component } from 'svelte';
+import { SvelteMap } from 'svelte/reactivity';
 import type { LayoutIntent } from './workspace.svelte';
 
 /** The single prop contract every panel content component receives. */
@@ -44,12 +45,9 @@ export interface PanelType {
 	confirmClose?: (panelId: string) => boolean;
 }
 
-const registry = new Map<string, PanelType>();
-/** Insertion order, so the dropdown lists panels in registration order. */
-const order: string[] = [];
+const registry = new SvelteMap<string, PanelType>();
 
 export function registerPanel(type: PanelType): void {
-	if (!registry.has(type.id)) order.push(type.id);
 	registry.set(type.id, type);
 }
 
@@ -58,7 +56,7 @@ export function getPanelType(id: string): PanelType | undefined {
 }
 
 export function listPanelTypes(): PanelType[] {
-	return order.map((id) => registry.get(id)).filter((t): t is PanelType => t !== undefined);
+	return [...registry.values()];
 }
 
 /** Resolve a panel type, falling back to a synthetic "unknown" descriptor so a
