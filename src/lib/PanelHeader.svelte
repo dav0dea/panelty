@@ -177,6 +177,9 @@
 	let headerEl = $state<HTMLDivElement | null>(null);
 	let zoneEl = $state<HTMLDivElement | null>(null);
 	let spilled = $state<Set<string>>(new Set());
+	/** Whether the content button shows its icon alone: the title is the last thing the header
+	 * gives up, after every action has spilled, so a narrow panel still says what it is. */
+	let bare = $state(false);
 
 	const isSpilled = (id: string): boolean => spilled.has(id);
 
@@ -184,15 +187,17 @@
 		return parseFloat(getComputedStyle(el).getPropertyValue(prop)) || 0;
 	}
 
-	/** The three actions' intrinsic widths and the trigger's, read with none of them hidden.
+	/** The three actions' intrinsic widths and the trigger's, read with none of them hidden, then
+	 * the content button's with its title and with its icon alone.
 	 *
-	 * The hide class is stripped and restored inside one synchronous block, so nothing is painted
-	 * mid-measurement and Svelte's own class bookkeeping stays correct (it re-applies from
-	 * `spilled` on the next update either way). Only runs when the root font size moved — which is
-	 * what the coarse `--panelty-hit` floor does to every one of these boxes at once. */
+	 * The hide classes are stripped and restored inside one synchronous block, so nothing is
+	 * painted mid-measurement and Svelte's own class bookkeeping stays correct (it re-applies from
+	 * `spilled` and `bare` on the next update either way). Only runs when the root font size moved
+	 * — which is what the coarse `--panelty-hit` floor does to every one of these boxes at once. */
 	function measureWidths(): number[] {
 		const host = zoneEl;
-		if (!host) return [];
+		const content = headerEl?.querySelector<HTMLElement>('.content-btn');
+		if (!host || !content) return [];
 		const hidden = [...host.querySelectorAll<HTMLElement>('.spilled')];
 		for (const el of hidden) el.classList.remove('spilled');
 		const widths = [...actions().map((a) => a.id), TRIGGER].map(
@@ -200,6 +205,14 @@
 				host.querySelector<HTMLElement>(`[data-testid="${id}"]`)?.getBoundingClientRect().width ?? 0
 		);
 		for (const el of hidden) el.classList.add('spilled');
+		// The button is the header's shrink absorber, so its intrinsic width is read off its
+		// content, not its box.
+		const wasBare = content.classList.contains('bare');
+		content.classList.remove('bare');
+		widths.push(content.scrollWidth);
+		content.classList.add('bare');
+		widths.push(content.scrollWidth);
+		if (!wasBare) content.classList.remove('bare');
 		return widths;
 	}
 
@@ -216,32 +229,30 @@
 		if (widths.length === 0) return;
 		const ids = actions().map((a) => a.id);
 		const items: OverflowItem[] = ids.map((id, i) => ({ id, width: widths[i] }));
+		const [trigger, titled, iconOnly] = widths.slice(ids.length);
 
 		const gap = px(host, 'gap');
 		// MEASURED each replan, off the boxes that do not move when an action spills: the header's
-		// own inner width, less the content dropdown and the two gaps around the flexible spacer.
-		// Never the action zone's OWN width — that is exactly what shrinks the moment an item
-		// leaves, and reading it is the oscillation bug `overflowFit.ts` opens with.
+		// own inner width, less the content dropdown AT ITS ICON-ONLY WIDTH and the two gaps around
+		// the flexible spacer. Never the action zone's OWN width — that is exactly what shrinks the
+		// moment an item leaves, and reading it is the oscillation bug `overflowFit.ts` opens with.
+		// Nor the dropdown's drawn width: the title takes what the kept actions leave, so the plan
+		// and the title are both functions of the bar's width alone and neither can flip the other.
 		const zone =
-			bar.clientWidth -
-			px(bar, 'padding-left') -
-			px(bar, 'padding-right') -
-			content.getBoundingClientRect().width -
-			px(bar, 'gap') * 2;
+			bar.clientWidth - px(bar, 'padding-left') - px(bar, 'padding-right') - iconOnly - px(bar, 'gap') * 2;
 		// …and the ✕ is charged off the top with the gap beside it, rather than given a slot in the
 		// plan. That IS the always-visible guarantee: an action can only ever spill into space the
 		// close button has already been paid out of.
 		const budget = zone - close.getBoundingClientRect().width - gap;
 
-		const next = planOverflow(items, ids, {
-			gap,
-			budget,
-			trigger: widths[widths.length - 1],
-			residentTrigger: false
-		});
+		const next = planOverflow(items, ids, { gap, budget, trigger, residentTrigger: false });
 		// Write only on a real change: the observer re-fires on the layout this write causes, and an
 		// unconditional assignment would keep the effect alive forever though the plan has converged.
 		if (next.size !== spilled.size || [...next].some((id) => !spilled.has(id))) spilled = next;
+		const kept = items.filter((it) => !next.has(it.id));
+		const used = kept.reduce((w, it) => w + it.width + gap, 0) + (next.size ? trigger + gap : 0);
+		const short = budget - used < titled - iconOnly;
+		if (short !== bare) bare = short;
 	}
 
 	$effect(() => {
@@ -312,7 +323,7 @@
 	aria-label="Panel header"
 	data-testid="panel-header"
 >
-	<Button variant="ghost" class="content-btn" onclick={openContent} title="Change panel content">
+	<Button variant="ghost" class={bare ? 'content-btn bare' : 'content-btn'} onclick={openContent} title={bare ? type.title : 'Change panel content'}>
 		{#if type.icon}<span class="ic"><Icon name={type.icon} /></span>{/if}
 		<span class="title">{type.title}</span>
 		<span class="caret"><Icon name="chevron-down" /></span>
@@ -436,6 +447,10 @@
 		font-weight: 500;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+	/* Icon alone: the title has no room, and the tooltip carries it. */
+	:global(.content-btn.bare) .title {
+		display: none;
 	}
 	.caret {
 		opacity: 0.5;
