@@ -171,7 +171,6 @@ class WorkspaceStore {
 	/** Adopt the arrangement the manager mirrored, and prune any viewpoint it invalidated — a panel
 	 * WE focused that a peer just closed, a page that went with it. */
 	syncFromDoc(tabs: Workspace[]): void {
-		const prev = this._tabs;
 		this._tabs = tabs;
 		this._resolveFollow();
 		// An EMPTY arrangement is a generation boundary, never a settled tree — the reset that hands
