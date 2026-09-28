@@ -55,8 +55,10 @@ export interface PanelHost {
 		ratio: number
 	): Promise<string | null>;
 	removePanel(panel: string): Promise<boolean>;
-	/** Every child's share at once, in child order — what a resize drag commits on pointer-up. */
-	resizeSplit(split: string, fractions: number[]): Promise<boolean>;
+	/** Every child's share at once, in child order. A resize drag sends each move with `preview`
+	 * and commits once on pointer-up without it; a host that keeps an undo history records the
+	 * commit alone. */
+	resizeSplit(split: string, fractions: number[], preview?: boolean): Promise<boolean>;
 	/** A panel's type and/or its opaque state. `state` MERGES key by key, so a caller sends only
 	 * what changed. `label` names the step a host with an undo history records. */
 	setPanel(

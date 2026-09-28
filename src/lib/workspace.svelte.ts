@@ -88,19 +88,9 @@ const REFUSING: LayoutHost = {
 class WorkspaceStore {
 	/** The manager's arrangement, mirrored from the doc root. Read-only: a write is a command. */
 	private _tabs = $state<Workspace[]>([]);
-	/** The shares a splitter drag is currently drawing, before it commits. A resize is one
-	 * continuous gesture, so the override lives here for its duration and lands as ONE
-	 * `resize_split` on pointer-up — never a command per pointermove. */
-	private _drag = $state<{ split: string; sizes: number[] } | null>(null);
-	/** The shares a commit put on the wire, held until the delta answering it lands. It keeps the
-	 * drawn shares from snapping back in the frame between the reply and the doc arriving (the reply
-	 * is sent first), and it is what the NEXT commit's "nothing changed" check compares against — the
-	 * replica is still a commit behind, so a drag returning the split to its pre-commit shares would
-	 * otherwise read as a no-op and be dropped. */
-	private _sent: { split: string; sizes: number[] } | null = null;
-	/** Whether the pointer is still on the seam. A delta landing mid-gesture — the previous commit's
-	 * own, or a peer's — must not retire the override the finger is drawing with. */
-	private _dragLive = false;
+	/** The shares a splitter drag has described so far. Each move goes to the host as a preview and
+	 * the host's tree is what draws; pointer-up commits the same shares as ONE command. */
+	private _drag: { split: string; sizes: number[] } | null = null;
 	/** Viewpoint: the page in front. Null falls back to the first, which is what a fresh client and
 	 * a page a peer closed both want. */
 	private _page = $state<string | null>(null);
@@ -142,12 +132,10 @@ class WorkspaceStore {
 		if (unsynced?.length) this._unsynced = unsynced;
 	}
 
-	/** The tree as DRAWN: the manager's, with this client's two overlays — the in-flight resize a
-	 * finger is still describing, and each editor's sub-patch depth. Both are viewpoint, so neither
-	 * is in the manager's copy and neither survives a rebuild from it. */
+	/** The tree as DRAWN: the manager's, with this client's one overlay — each editor's sub-patch
+	 * depth, which is viewpoint, so it is not in the manager's copy and does not survive a rebuild. */
 	private _workspaces = $derived.by(() => {
 		const paths = this._paths;
-		const drag = this._drag;
 		const overlay = (n: LayoutNode): LayoutNode => {
 			if (n.kind === 'panel') {
 				const path = paths[n.id];
@@ -155,8 +143,7 @@ class WorkspaceStore {
 					? n
 					: { ...n, state: { ...asStateObject(n.state), subpatchPath: path } };
 			}
-			const sizes = drag?.split === n.id && drag.sizes.length === n.children.length ? drag.sizes : n.sizes;
-			return { ...n, sizes, children: n.children.map(overlay) };
+			return { ...n, children: n.children.map(overlay) };
 		};
 		const tabs = this._tabs.map((w) => ({ ...w, root: overlay(w.root) }));
 		return tabs.length > 0 ? tabs : this._unsynced;
@@ -182,22 +169,10 @@ class WorkspaceStore {
 	// --- the replica ---------------------------------------------------------
 
 	/** Adopt the arrangement the manager mirrored, and prune any viewpoint it invalidated — a panel
-	 * WE focused that a peer just closed, a page that went with it. This is also where an in-flight
-	 * resize override retires: the split's own shares moved, so the drawn tree is the manager's
-	 * again. */
+	 * WE focused that a peer just closed, a page that went with it. */
 	syncFromDoc(tabs: Workspace[]): void {
 		const prev = this._tabs;
 		this._tabs = tabs;
-
-		const s = this._sent;
-		if (s) {
-			const before = fractionsOf(prev, s.split);
-			const after = fractionsOf(tabs, s.split);
-			if (before.length !== after.length || before.some((v, i) => v !== after[i])) {
-				this._sent = null;
-				if (!this._dragLive) this._drag = null;
-			}
-		}
 		this._resolveFollow();
 		// An EMPTY arrangement is a generation boundary, never a settled tree — the reset that hands
 		// one over is followed by the manager's real document, and a replica before its first pull
@@ -290,48 +265,23 @@ class WorkspaceStore {
 		void this._host.removePanel(panelId);
 	}
 
-	/** A splitter drag fires this per pointermove. It draws locally — `containerPx` is the split's
-	 * measured size along its axis, the denominator of the pixel floor — and nothing leaves
-	 * the client until `commitResize`. */
+	/** A splitter drag fires this per pointermove, with `delta` since the move before. `containerPx`
+	 * is the split's measured size along its axis, the denominator of the pixel floor. Each move is
+	 * a preview to the host, whose tree draws it. */
 	resize(splitId: string, dividerIndex: number, delta: number, containerPx = 0): void {
 		const base =
 			this._drag?.split === splitId ? this._drag.sizes : fractionsOf(this._tabs, splitId);
 		if (base.length === 0) return;
-		this._dragLive = true;
 		this._drag = { split: splitId, sizes: resizeFractions(base, dividerIndex, delta, containerPx) };
+		void this._host.resizeSplit(splitId, this._drag.sizes, true);
 	}
 
-	/** Pointer-up: the shares the drag drew become ONE command, and therefore one ctrl-Z. */
+	/** Pointer-up: the shares the drag described become ONE command, and therefore one ctrl-Z. A
+	 * drag that moved nothing sends nothing. */
 	commitResize(splitId: string): void {
 		const d = this._drag;
-		// The pointer is up either way. `_sent` outlives the drop: it is still the last thing this
-		// client put on the wire for that split, and therefore still the honest baseline.
-		this._dragLive = false;
-		const drop = (): void => {
-			this._drag = null;
-		};
-		if (!d || d.split !== splitId) {
-			drop();
-			return;
-		}
-		// What was last SENT for this split, falling back to the replica. Comparing against the
-		// replica alone would drop a second drag that returns the split to its pre-commit shares,
-		// because the replica is still showing exactly those.
-		const before =
-			this._sent?.split === splitId ? this._sent.sizes : fractionsOf(this._tabs, splitId);
-		const same = before.length === d.sizes.length && before.every((s, i) => s === d.sizes[i]);
-		if (same) {
-			drop();
-			return;
-		}
-		this._sent = { split: splitId, sizes: d.sizes };
-		void this._host.resizeSplit(splitId, d.sizes).then((ok) => {
-			// A refusal never landed, so it is not a baseline either.
-			if (!ok) {
-				this._sent = null;
-				drop();
-			}
-		});
+		this._drag = null;
+		if (d?.split === splitId) void this._host.resizeSplit(splitId, d.sizes);
 	}
 
 	setType(panelId: string, panelType: string): void {
